@@ -210,6 +210,35 @@ Parameters
 	})
 }
 
+func rcDeleteStats(ctx context.Context, in rc.Params) (rc.Params, error) {
+	// Group name required because we only do single group.
+	group, err := in.GetString("group")
+	if rc.NotErrParamNotFound(err) {
+		return rc.Params{}, err
+	}
+
+	if group != "" {
+		groups.delete(group)
+	}
+
+	return rc.Params{}, nil
+}
+
+func init() {
+	rc.Add(rc.Call{
+		Path:  "core/stats-delete",
+		Fn:    rcDeleteStats,
+		Title: "Delete stats group.",
+		Help: `
+This deletes entire stats group
+
+Parameters
+
+- group - name of the stats group (string)
+`,
+	})
+}
+
 type statsGroupCtx int64
 
 const statsGroupKey statsGroupCtx = 1
@@ -287,7 +316,7 @@ func (sg *statsGroups) set(group string, stats *StatsInfo) {
 		sg.order = sg.order[r:]
 	}
 
-	// Exclude global stats from
+	// Exclude global stats from listing
 	if group != globalStats {
 		sg.order = append(sg.order, group)
 	}
@@ -347,4 +376,26 @@ func (sg *statsGroups) reset() {
 
 	sg.m = make(map[string]*StatsInfo)
 	sg.order = nil
+}
+
+// delete removes all references to the group.
+func (sg *statsGroups) delete(group string) {
+	sg.mu.Lock()
+	defer sg.mu.Unlock()
+	stats := sg.m[group]
+	if stats == nil {
+		return
+	}
+	stats.ResetErrors()
+	stats.ResetCounters()
+	stats.PruneAllTransfers()
+	delete(sg.m, group)
+
+	// Remove group reference from the ordering slice.
+	tmp := sg.order[:0]
+	for _, g := range sg.order {
+		if g != group {
+			tmp = append(tmp, g)
+		}
+	}
 }
