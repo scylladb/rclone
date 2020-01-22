@@ -18,6 +18,8 @@ import (
 
 // Job describes a asynchronous task started via the rc package
 type Job struct {
+	observers sync.Map
+
 	mu        sync.Mutex
 	ID        int64     `json:"id"`
 	Group     string    `json:"group"`
@@ -34,6 +36,47 @@ type Job struct {
 	// the real error to the upper application layers while still printing the
 	// string error message.
 	realErr error
+}
+
+// WaitForFinish will block until provided context is canceled or job is
+// finished.
+func (j *Job) WaitForFinish(ctx context.Context) {
+	j.mu.Lock()
+	if j.Finished {
+		return
+	}
+	j.mu.Unlock()
+
+	waitChan := make(chan struct{})
+	j.observers.Store(waitChan, struct{}{})
+
+	select {
+	case <-ctx.Done():
+		return
+	case <-waitChan:
+		return
+	}
+}
+
+func (j *Job) notifyFinished() {
+	j.observers.Range(func(key, value interface{}) bool {
+		if key == nil {
+			return false
+		}
+
+		close(key.(chan struct{}))
+		return true
+	})
+}
+
+// RcParams marshals job stats into rc.Params.
+func (j *Job) RcParams() (rc.Params, error) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+
+	out := make(rc.Params)
+	err := rc.Reshape(&out, j)
+	return out, err
 }
 
 // Jobs describes a collection of running tasks
@@ -137,6 +180,7 @@ func (job *Job) finish(out rc.Params, err error) {
 	}
 	job.Finished = true
 	job.mu.Unlock()
+	job.notifyFinished()
 	running.kickExpire() // make sure this job gets expired
 }
 
@@ -239,6 +283,7 @@ func init() {
 		Help: `Parameters
 
 - jobid - id of the job (integer)
+- long_poll - optional millisecond duration to wait for job to complete before returning 
 
 Results
 
@@ -266,10 +311,17 @@ func rcJobStatus(ctx context.Context, in rc.Params) (out rc.Params, err error) {
 	if job == nil {
 		return nil, errors.New("job not found")
 	}
-	job.mu.Lock()
-	defer job.mu.Unlock()
-	out = make(rc.Params)
-	err = rc.Reshape(&out, job)
+	longPoll, err := in.GetInt64("long_poll")
+	if err != nil && !rc.IsErrParamNotFound(err) {
+		return nil, err
+	}
+
+	if longPoll > 0 {
+		ctxWait, cancel := context.WithTimeout(ctx, time.Duration(longPoll)*time.Millisecond)
+		job.WaitForFinish(ctxWait)
+		cancel()
+	}
+	out, err = job.RcParams()
 	if err != nil {
 		return nil, errors.Wrap(err, "reshape failed in job status")
 	}
