@@ -22,6 +22,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"net/url"
 	"path"
@@ -1007,6 +1008,41 @@ func (o *Object) split() (bucket, bucketPath string) {
 	return o.fs.split(o.remote)
 }
 
+type blocker struct {
+	inner http.RoundTripper
+}
+
+func (b blocker) RoundTrip(r *http.Request) (*http.Response, error) {
+	if err := r.Context().Err(); err != nil {
+		fmt.Println(r.URL.String())
+		return b.inner.RoundTrip(r)
+	}
+
+	n := r.URL.Query().Get("partNumber")
+	if n != "" {
+
+		m := `<?xml version="1.0" encoding="UTF-8"?><Error><Code>InternalError</Code><Message>We encountered an internal error. Please try again</Message><RequestId>0FFCBB1FA3899980</RequestId><HostId>SWe6OKcx4S9Rqd9b/d6HdQZ1BCD9OxsUTuODnjPfKuKyyFFbmW/H3C/A9FESZAdJkhNsYCznBbU=</HostId></Error>`
+
+		if v, _ := strconv.Atoi(n); v > 10 {
+			b := [10]byte{}
+			r.Body.Read(b[:])
+
+			resp := &http.Response{
+				Status:     "500 InternalServerError",
+				StatusCode: 500,
+				Proto:      "HTTP/1.1",
+				ProtoMajor: 1,
+				ProtoMinor: 1,
+				Request:    r,
+				Header:     http.Header{"Content-Length": []string{strconv.Itoa(len(m))}},
+				Body:       ioutil.NopCloser(bytes.NewBufferString(m)),
+			}
+			return resp, nil
+		}
+	}
+	return b.inner.RoundTrip(r)
+}
+
 // s3Connection makes a connection to s3
 func s3Connection(opt *Options) (*s3.S3, *session.Session, error) {
 	// Make the auth
@@ -1073,12 +1109,17 @@ func s3Connection(opt *Options) (*s3.S3, *session.Session, error) {
 	if opt.Provider == "AWS" || opt.Provider == "Alibaba" || opt.Provider == "Netease" || opt.UseAccelerateEndpoint {
 		opt.ForcePathStyle = false
 	}
+
+	client := fshttp.NewClient(fs.Config)
+	client.Transport = blocker{client.Transport}
+
 	awsConfig := aws.NewConfig().
 		WithMaxRetries(maxRetries).
 		WithCredentials(cred).
-		WithHTTPClient(fshttp.NewClient(fs.Config)).
+		WithHTTPClient(client).
 		WithS3ForcePathStyle(opt.ForcePathStyle).
-		WithS3UseAccelerate(opt.UseAccelerateEndpoint)
+		WithS3UseAccelerate(opt.UseAccelerateEndpoint).
+		WithLogLevel(aws.LogDebugWithRequestRetries)
 	if opt.Region != "" {
 		awsConfig.WithRegion(opt.Region)
 	}
@@ -2204,9 +2245,12 @@ func (o *Object) uploadMultipart(ctx context.Context, req *s3.PutObjectInput, si
 				}
 				uout, err := f.c.UploadPartWithContext(gCtx, uploadPartReq)
 				if err != nil {
+					fmt.Println("UploadPartWithContext() error", err)
 					if partNum <= int64(concurrency) {
+						fmt.Println("AAAAAAAAAAAA")
 						return f.shouldRetry(err)
 					}
+					fmt.Println("BBBBBBBBBBBBBB")
 					// retry all chunks once have done the first batch
 					return true, err
 				}
@@ -2224,6 +2268,7 @@ func (o *Object) uploadMultipart(ctx context.Context, req *s3.PutObjectInput, si
 			bufs <- buf[:partSize]
 
 			if err != nil {
+				fmt.Println("CCCCCCCCCCCCCCCCCCC", err)
 				return errors.Wrap(err, "multipart upload failed to upload part")
 			}
 			return nil
