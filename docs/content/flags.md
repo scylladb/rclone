@@ -326,6 +326,7 @@ and may be set in the config file.
       --s3-force-path-style                          If true use path style access if false use virtual hosted style. (default true)
       --s3-leave-parts-on-error                      If true avoid calling abort upload on a failure, leaving all successfully uploaded parts on S3 for manual recovery.
       --s3-location-constraint string                Location constraint - must be set to match the Region.
+      --s3-max-retries int                           Maximum number of retries. (default 10)
       --s3-provider string                           Choose your S3 provider.
       --s3-region string                             Region to connect to.
       --s3-secret-access-key string                  AWS Secret Access Key (password)
