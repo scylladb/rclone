@@ -34,6 +34,7 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
+	"github.com/aws/aws-sdk-go/aws/client"
 	"github.com/aws/aws-sdk-go/aws/corehandlers"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/credentials/ec2rolecreds"
@@ -1093,7 +1094,6 @@ func s3Connection(opt *Options) (*s3.S3, *session.Session, error) {
 		opt.ForcePathStyle = false
 	}
 	awsConfig := aws.NewConfig().
-		WithMaxRetries(fs.Config.LowLevelRetries).
 		WithCredentials(cred).
 		WithHTTPClient(fshttp.NewClient(fs.Config)).
 		WithS3ForcePathStyle(opt.ForcePathStyle).
@@ -1104,6 +1104,14 @@ func s3Connection(opt *Options) (*s3.S3, *session.Session, error) {
 	if opt.Endpoint != "" {
 		awsConfig.WithEndpoint(opt.Endpoint)
 	}
+	// Force retry check even if request is not retryable so we can control
+	// retries with context.
+	withEnforceShouldRetryCheck(awsConfig)
+	request.WithRetryer(awsConfig, contextualRetryer{
+		client.DefaultRetryer{
+			NumMaxRetries: fs.Config.LowLevelRetries,
+		},
+	})
 
 	// awsConfig.WithLogLevel(aws.LogDebugWithSigning)
 	awsSessionOpts := session.Options{
@@ -1248,6 +1256,11 @@ func NewFs(name, root string, m configmap.Mapper) (fs.Fs, error) {
 	}
 	// f.listMultipartUploads()
 	return f, nil
+}
+
+func withEnforceShouldRetryCheck(c *aws.Config) {
+	b := true
+	c.EnforceShouldRetryCheck = &b
 }
 
 // Return an Object from a path
