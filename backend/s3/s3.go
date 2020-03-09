@@ -1925,7 +1925,7 @@ func (f *Fs) getMemoryPool(size int64) *pool.Pool {
 	if !ok {
 		f.pools[size] = pool.New(
 			time.Duration(f.opt.MemoryPoolFlushTime),
-			int(f.opt.ChunkSize),
+			int(size),
 			f.opt.UploadConcurrency*fs.Config.Transfers,
 			f.opt.MemoryPoolUseMmap,
 		)
