@@ -1131,7 +1131,7 @@ func s3Connection(opt *Options) (*s3.S3, *session.Session, error) {
 		opt.ForcePathStyle = false
 	}
 	awsConfig := aws.NewConfig().
-		WithMaxRetries(fs.Config.LowLevelRetries).
+		WithMaxRetries(0). // Rely on rclone's retry logic
 		WithCredentials(cred).
 		WithHTTPClient(fshttp.NewClient(fs.Config)).
 		WithS3ForcePathStyle(opt.ForcePathStyle).
@@ -1238,17 +1238,12 @@ func NewFs(name, root string, m configmap.Mapper) (fs.Fs, error) {
 		return nil, err
 	}
 
-	pc := fs.NewPacer(pacer.NewS3(pacer.MinSleep(minSleep)))
-	// Set pacer retries to 0 because we are relying on SDK retry mechanism.
-	// Setting it to 1 because in context of pacer it means 1 attempt.
-	pc.SetRetries(1)
-
 	f := &Fs{
 		name:  name,
 		opt:   *opt,
 		c:     c,
 		ses:   ses,
-		pacer: pc,
+		pacer: fs.NewPacer(pacer.NewS3(pacer.MinSleep(minSleep))),
 		cache: bucket.NewCache(),
 		srv:   fshttp.NewClient(fs.Config),
 		pool: pool.New(
