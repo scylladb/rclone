@@ -920,7 +920,6 @@ type Fs struct {
 	cache         *bucket.Cache    // cache for bucket creation status
 	pacer         *fs.Pacer        // To pace the API calls
 	srv           *http.Client     // a plain http client
-	pool          *pool.Pool       // memory pool
 }
 
 // Object describes a s3 object
@@ -1220,12 +1219,6 @@ func NewFs(name, root string, m configmap.Mapper) (fs.Fs, error) {
 		pacer: pc,
 		cache: bucket.NewCache(),
 		srv:   fshttp.NewClient(fs.Config),
-		pool: pool.New(
-			time.Duration(opt.MemoryPoolFlushTime),
-			int(opt.ChunkSize),
-			opt.UploadConcurrency*fs.Config.Transfers,
-			opt.MemoryPoolUseMmap,
-		),
 	}
 
 	f.setRoot(root)
@@ -1915,19 +1908,6 @@ func (f *Fs) Hashes() hash.Set {
 	return hash.Set(hash.MD5)
 }
 
-func (f *Fs) getMemoryPool(size int64) *pool.Pool {
-	if size == int64(f.opt.ChunkSize) {
-		return f.pool
-	}
-
-	return pool.New(
-		time.Duration(f.opt.MemoryPoolFlushTime),
-		int(size),
-		f.opt.UploadConcurrency*fs.Config.Transfers,
-		f.opt.MemoryPoolUseMmap,
-	)
-}
-
 // ------------------------------------------------------------
 
 // Fs returns the parent Fs
@@ -2152,7 +2132,24 @@ func (o *Object) uploadMultipart(ctx context.Context, req *s3.PutObjectInput, si
 		}
 	}
 
-	memPool := f.getMemoryPool(int64(partSize))
+	var memPool *pool.Pool
+
+	if partSize == int(f.opt.ChunkSize) {
+		memPool = s3ChunkMemPool.Get(
+			time.Duration(f.opt.MemoryPoolFlushTime),
+			partSize,
+			f.opt.UploadConcurrency*fs.Config.Transfers,
+			f.opt.MemoryPoolUseMmap,
+		)
+		defer s3ChunkMemPool.Put(partSize, memPool)
+	} else {
+		memPool = pool.New(
+			time.Duration(f.opt.MemoryPoolFlushTime),
+			partSize,
+			f.opt.UploadConcurrency*fs.Config.Transfers,
+			f.opt.MemoryPoolUseMmap,
+		)
+	}
 
 	var cout *s3.CreateMultipartUploadOutput
 	err = f.pacer.Call(func() (bool, error) {
