@@ -1762,7 +1762,7 @@ func (f *Fs) list(ctx context.Context, bucket, directory, prefix string, addBuck
 		}
 		var resp *s3.ListObjectsOutput
 		var err error
-		err = f.pacer.Call(func() (bool, error) {
+		err = f.pacer.CallContext(ctx, func() (bool, error) {
 			resp, err = f.c.ListObjectsWithContext(ctx, &req)
 			if err != nil && !urlEncodeListings {
 				if awsErr, ok := err.(awserr.RequestFailure); ok {
@@ -1922,7 +1922,7 @@ func (f *Fs) listDir(ctx context.Context, bucket, directory, prefix string, addB
 func (f *Fs) listBuckets(ctx context.Context) (entries fs.DirEntries, err error) {
 	req := s3.ListBucketsInput{}
 	var resp *s3.ListBucketsOutput
-	err = f.pacer.Call(func() (bool, error) {
+	err = f.pacer.CallContext(ctx, func() (bool, error) {
 		resp, err = f.c.ListBucketsWithContext(ctx, &req)
 		return f.shouldRetry(err)
 	})
@@ -2037,7 +2037,7 @@ func (f *Fs) bucketExists(ctx context.Context, bucket string) (bool, error) {
 	req := s3.HeadBucketInput{
 		Bucket: &bucket,
 	}
-	err := f.pacer.Call(func() (bool, error) {
+	err := f.pacer.CallContext(ctx, func() (bool, error) {
 		_, err := f.c.HeadBucketWithContext(ctx, &req)
 		return f.shouldRetry(err)
 	})
@@ -2073,7 +2073,7 @@ func (f *Fs) makeBucket(ctx context.Context, bucket string) error {
 				LocationConstraint: &f.opt.LocationConstraint,
 			}
 		}
-		err := f.pacer.Call(func() (bool, error) {
+		err := f.pacer.CallContext(ctx, func() (bool, error) {
 			_, err := f.c.CreateBucketWithContext(ctx, &req)
 			return f.shouldRetry(err)
 		})
@@ -2103,7 +2103,7 @@ func (f *Fs) Rmdir(ctx context.Context, dir string) error {
 		req := s3.DeleteBucketInput{
 			Bucket: &bucket,
 		}
-		err := f.pacer.Call(func() (bool, error) {
+		err := f.pacer.CallContext(ctx, func() (bool, error) {
 			_, err := f.c.DeleteBucketWithContext(ctx, &req)
 			return f.shouldRetry(err)
 		})
@@ -2160,7 +2160,7 @@ func (f *Fs) copy(ctx context.Context, req *s3.CopyObjectInput, dstBucket, dstPa
 	if src.bytes >= int64(f.opt.CopyCutoff) {
 		return f.copyMultipart(ctx, req, dstBucket, dstPath, srcBucket, srcPath, src)
 	}
-	return f.pacer.Call(func() (bool, error) {
+	return f.pacer.CallContext(ctx, func() (bool, error) {
 		_, err := f.c.CopyObjectWithContext(ctx, req)
 		return f.shouldRetry(err)
 	})
@@ -2203,7 +2203,7 @@ func (f *Fs) copyMultipart(ctx context.Context, copyReq *s3.CopyObjectInput, dst
 	req.Key = &dstPath
 
 	var cout *s3.CreateMultipartUploadOutput
-	if err := f.pacer.Call(func() (bool, error) {
+	if err := f.pacer.CallContext(ctx, func() (bool, error) {
 		var err error
 		cout, err = f.c.CreateMultipartUploadWithContext(ctx, req)
 		return f.shouldRetry(err)
@@ -2215,7 +2215,7 @@ func (f *Fs) copyMultipart(ctx context.Context, copyReq *s3.CopyObjectInput, dst
 	defer atexit.OnError(&err, func() {
 		// Try to abort the upload, but ignore the error.
 		fs.Debugf(src, "Cancelling multipart copy")
-		_ = f.pacer.Call(func() (bool, error) {
+		_ = f.pacer.CallContext(ctx, func() (bool, error) {
 			_, err := f.c.AbortMultipartUploadWithContext(context.Background(), &s3.AbortMultipartUploadInput{
 				Bucket:       &dstBucket,
 				Key:          &dstPath,
@@ -2234,7 +2234,7 @@ func (f *Fs) copyMultipart(ctx context.Context, copyReq *s3.CopyObjectInput, dst
 
 	var parts []*s3.CompletedPart
 	for partNum := int64(1); partNum <= numParts; partNum++ {
-		if err := f.pacer.Call(func() (bool, error) {
+		if err := f.pacer.CallContext(ctx, func() (bool, error) {
 			partNum := partNum
 			uploadPartReq := &s3.UploadPartCopyInput{}
 			structs.SetFrom(uploadPartReq, copyReq)
@@ -2257,7 +2257,7 @@ func (f *Fs) copyMultipart(ctx context.Context, copyReq *s3.CopyObjectInput, dst
 		}
 	}
 
-	return f.pacer.Call(func() (bool, error) {
+	return f.pacer.CallContext(ctx, func() (bool, error) {
 		_, err := f.c.CompleteMultipartUploadWithContext(ctx, &s3.CompleteMultipartUploadInput{
 			Bucket: &dstBucket,
 			Key:    &dstPath,
@@ -2715,7 +2715,7 @@ func (o *Object) headObject(ctx context.Context) (resp *s3.HeadObjectOutput, err
 	if o.fs.opt.SSECustomerKeyMD5 != "" {
 		req.SSECustomerKeyMD5 = &o.fs.opt.SSECustomerKeyMD5
 	}
-	err = o.fs.pacer.Call(func() (bool, error) {
+	err = o.fs.pacer.CallContext(ctx, func() (bool, error) {
 		var err error
 		resp, err = o.fs.c.HeadObjectWithContext(ctx, &req)
 		return o.fs.shouldRetry(err)
@@ -2864,7 +2864,8 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (in io.Read
 			}
 		}
 	}
-	err = o.fs.pacer.Call(func() (bool, error) {
+
+	err = o.fs.pacer.CallContext(ctx, func() (bool, error) {
 		var err error
 		httpReq.HTTPRequest = httpReq.HTTPRequest.WithContext(ctx)
 		err = httpReq.Send()
@@ -2924,7 +2925,7 @@ func (o *Object) uploadMultipart(ctx context.Context, req *s3.PutObjectInput, si
 	var mReq s3.CreateMultipartUploadInput
 	structs.SetFrom(&mReq, req)
 	var cout *s3.CreateMultipartUploadOutput
-	err = f.pacer.Call(func() (bool, error) {
+	err = f.pacer.CallContext(ctx, func() (bool, error) {
 		var err error
 		cout, err = f.c.CreateMultipartUploadWithContext(ctx, &mReq)
 		return f.shouldRetry(err)
@@ -2939,7 +2940,7 @@ func (o *Object) uploadMultipart(ctx context.Context, req *s3.PutObjectInput, si
 			return
 		}
 		fs.Debugf(o, "Cancelling multipart upload")
-		errCancel := f.pacer.Call(func() (bool, error) {
+		errCancel := f.pacer.CallContext(ctx, func() (bool, error) {
 			_, err := f.c.AbortMultipartUploadWithContext(context.Background(), &s3.AbortMultipartUploadInput{
 				Bucket:       req.Bucket,
 				Key:          req.Key,
@@ -3005,7 +3006,7 @@ func (o *Object) uploadMultipart(ctx context.Context, req *s3.PutObjectInput, si
 			md5sumBinary := md5.Sum(buf)
 			md5sum := base64.StdEncoding.EncodeToString(md5sumBinary[:])
 
-			err = f.pacer.Call(func() (bool, error) {
+			err = f.pacer.CallContext(ctx, func() (bool, error) {
 				uploadPartReq := &s3.UploadPartInput{
 					Body:                 bytes.NewReader(buf),
 					Bucket:               req.Bucket,
@@ -3052,7 +3053,7 @@ func (o *Object) uploadMultipart(ctx context.Context, req *s3.PutObjectInput, si
 		return *parts[i].PartNumber < *parts[j].PartNumber
 	})
 
-	err = f.pacer.Call(func() (bool, error) {
+	err = f.pacer.CallContext(ctx, func() (bool, error) {
 		_, err := f.c.CompleteMultipartUploadWithContext(ctx, &s3.CompleteMultipartUploadInput{
 			Bucket: req.Bucket,
 			Key:    req.Key,
@@ -3243,7 +3244,7 @@ func (o *Object) Remove(ctx context.Context) error {
 		Bucket: &bucket,
 		Key:    &bucketPath,
 	}
-	err := o.fs.pacer.Call(func() (bool, error) {
+	err := o.fs.pacer.CallContext(ctx, func() (bool, error) {
 		_, err := o.fs.c.DeleteObjectWithContext(ctx, &req)
 		return o.fs.shouldRetry(err)
 	})
