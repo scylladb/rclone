@@ -24,8 +24,9 @@ type March struct {
 	// parameters
 	Ctx                    context.Context // context for background goroutines
 	Fdst                   fs.Fs           // source Fs
+	DstDir                 string          // destination directory
 	Fsrc                   fs.Fs           // dest Fs
-	Dir                    string          // directory
+	SrcDir                 string          // source directory
 	NoTraverse             bool            // don't traverse the destination
 	SrcIncludeAll          bool            // don't include all files in the src
 	DstIncludeAll          bool            // don't include all files in the destination
@@ -50,9 +51,9 @@ type Marcher interface {
 
 // init sets up a march over opt.Fsrc, and opt.Fdst calling back callback for each match
 func (m *March) init() {
-	m.srcListDir = m.makeListDir(m.Fsrc, m.SrcIncludeAll)
+	m.srcListDir = m.makeListDir(m.Fsrc, m.SrcDir, m.SrcIncludeAll)
 	if !m.NoTraverse {
-		m.dstListDir = m.makeListDir(m.Fdst, m.DstIncludeAll)
+		m.dstListDir = m.makeListDir(m.Fdst, m.DstDir, m.DstIncludeAll)
 	}
 	// Now create the matching transform
 	// ..normalise the UTF8 first
@@ -75,7 +76,7 @@ type listDirFn func(dir string) (entries fs.DirEntries, err error)
 
 // makeListDir makes constructs a listing function for the given fs
 // and includeAll flags for marching through the file system.
-func (m *March) makeListDir(f fs.Fs, includeAll bool) listDirFn {
+func (m *March) makeListDir(f fs.Fs, remote string, includeAll bool) listDirFn {
 	if !(fs.Config.UseListR && f.Features().ListR != nil) && // !--fast-list active and
 		!(fs.Config.NoTraverse && filter.Active.HaveFilesFrom()) { // !(--files-from and --no-traverse)
 		return func(dir string) (entries fs.DirEntries, err error) {
@@ -95,7 +96,7 @@ func (m *March) makeListDir(f fs.Fs, includeAll bool) listDirFn {
 		mu.Lock()
 		defer mu.Unlock()
 		if !started {
-			dirs, dirsErr = walk.NewDirTree(m.Ctx, f, m.Dir, includeAll, fs.Config.MaxDepth)
+			dirs, dirsErr = walk.NewDirTree(m.Ctx, f, remote, includeAll, fs.Config.MaxDepth)
 			started = true
 		}
 		if dirsErr != nil {
@@ -188,9 +189,9 @@ func (m *March) Run() error {
 	// Start the process
 	traversing.Add(1)
 	in <- listDirJob{
-		srcRemote: m.Dir,
+		srcRemote: m.SrcDir,
 		srcDepth:  srcDepth - 1,
-		dstRemote: m.Dir,
+		dstRemote: m.DstDir,
 		dstDepth:  dstDepth - 1,
 		noDst:     m.NoCheckDest,
 	}
