@@ -217,7 +217,6 @@ func CheckFn(ctx context.Context, opt *CheckOpt) error {
 		Ctx:      ctx,
 		Fdst:     c.opt.Fdst,
 		Fsrc:     c.opt.Fsrc,
-		Dir:      "",
 		Callback: c,
 	}
 	fs.Debugf(c.opt.Fdst, "Waiting for checks to finish")

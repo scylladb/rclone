@@ -28,7 +28,8 @@ type syncCopyMove struct {
 	DoMove             bool
 	copyEmptySrcDirs   bool
 	deleteEmptySrcDirs bool
-	dir                string
+	dstDir             string
+	srcDir             string
 	// internal state
 	ci                     *fs.ConfigInfo         // global config
 	fi                     *filter.Filter         // filter config
@@ -73,6 +74,7 @@ type syncCopyMove struct {
 	compareCopyDest        fs.Fs                  // place to check for files to server-side copy
 	backupDir              fs.Fs                  // place to store overwrites/deletes
 	checkFirst             bool                   // if set run all the checkers before starting transfers
+	useSrcBaseName         bool                   // use only source basename when coping or moving to destination directory
 }
 
 type trackRenamesStrategy byte
@@ -95,7 +97,7 @@ func (strategy trackRenamesStrategy) leaf() bool {
 	return (strategy & trackRenamesStrategyLeaf) != 0
 }
 
-func newSyncCopyMove(ctx context.Context, fdst, fsrc fs.Fs, deleteMode fs.DeleteMode, DoMove bool, deleteEmptySrcDirs bool, copyEmptySrcDirs bool) (*syncCopyMove, error) {
+func newSyncCopyMove(ctx context.Context, fdst fs.Fs, remoteDst string, fsrc fs.Fs, remoteSrc string, deleteMode fs.DeleteMode, DoMove bool, deleteEmptySrcDirs bool, copyEmptySrcDirs bool, useSrcBaseName bool) (*syncCopyMove, error) {
 	if (deleteMode != fs.DeleteModeOff || DoMove) && operations.Overlapping(fdst, fsrc) {
 		return nil, fserrors.FatalError(fs.ErrorOverlapping)
 	}
@@ -105,12 +107,13 @@ func newSyncCopyMove(ctx context.Context, fdst, fsrc fs.Fs, deleteMode fs.Delete
 		ci:                     ci,
 		fi:                     fi,
 		fdst:                   fdst,
+		dstDir:                 remoteDst,
 		fsrc:                   fsrc,
+		srcDir:                 remoteSrc,
 		deleteMode:             deleteMode,
 		DoMove:                 DoMove,
 		copyEmptySrcDirs:       copyEmptySrcDirs,
 		deleteEmptySrcDirs:     deleteEmptySrcDirs,
-		dir:                    "",
 		srcFilesChan:           make(chan fs.Object, ci.Checkers+ci.Transfers),
 		srcFilesResult:         make(chan error, 1),
 		dstFilesResult:         make(chan error, 1),
@@ -125,6 +128,7 @@ func newSyncCopyMove(ctx context.Context, fdst, fsrc fs.Fs, deleteMode fs.Delete
 		modifyWindow:           fs.GetModifyWindow(ctx, fsrc, fdst),
 		trackRenamesCh:         make(chan fs.Object, ci.Checkers),
 		checkFirst:             ci.CheckFirst,
+		useSrcBaseName:         useSrcBaseName,
 	}
 	backlog := ci.MaxBacklog
 	if s.checkFirst {
@@ -389,13 +393,30 @@ func (s *syncCopyMove) pairCopyOrMove(ctx context.Context, in *pipe, fdst fs.Fs,
 			return
 		}
 		src := pair.Src
+		name := s.dstObjectName(pair)
 		if s.DoMove {
-			_, err = operations.Move(ctx, fdst, pair.Dst, src.Remote(), src)
+			_, err = operations.Move(ctx, fdst, pair.Dst, name, src)
 		} else {
-			_, err = operations.Copy(ctx, fdst, pair.Dst, src.Remote(), src)
+			_, err = operations.Copy(ctx, fdst, pair.Dst, name, src)
 		}
 		s.processError(err)
 	}
+}
+
+// dstObjectName returns full name of the object as it should be on the
+// destination after copy or move.
+func (s *syncCopyMove) dstObjectName(pair fs.ObjectPair) string {
+	if !s.useSrcBaseName {
+		return pair.Src.Remote()
+	}
+
+	// Example when coping:
+	// data:test_keyspace/snapshots/123/bla/somefile.file
+	// to
+	// s3:bucket/backup/long/path/to/123
+	// this should return backup/long/path/to/123/bla/somefile.file
+	// So we get full path on the destination fs.
+	return path.Join(s.dstDir, strings.TrimPrefix(pair.Src.Remote(), s.srcDir))
 }
 
 // This starts the background checkers.
@@ -832,8 +853,9 @@ func (s *syncCopyMove) run() error {
 	m := &march.March{
 		Ctx:                    s.inCtx,
 		Fdst:                   s.fdst,
+		DstDir:                 s.dstDir,
 		Fsrc:                   s.fsrc,
-		Dir:                    s.dir,
+		SrcDir:                 s.srcDir,
 		NoTraverse:             s.noTraverse,
 		Callback:               s,
 		DstIncludeAll:          s.fi.Opt.DeleteExcluded,
@@ -1049,6 +1071,7 @@ func (s *syncCopyMove) Match(ctx context.Context, dst, src fs.DirEntry) (recurse
 // If DoMove is true then files will be moved instead of copied
 //
 // dir is the start directory, "" for root
+
 func runSyncCopyMove(ctx context.Context, fdst, fsrc fs.Fs, deleteMode fs.DeleteMode, DoMove bool, deleteEmptySrcDirs bool, copyEmptySrcDirs bool) error {
 	ci := fs.GetConfig(ctx)
 	if deleteMode != fs.DeleteModeOff && DoMove {
@@ -1060,7 +1083,7 @@ func runSyncCopyMove(ctx context.Context, fdst, fsrc fs.Fs, deleteMode fs.Delete
 			return fserrors.FatalError(errors.New("can't use --delete-before with --track-renames"))
 		}
 		// only delete stuff during in this pass
-		do, err := newSyncCopyMove(ctx, fdst, fsrc, fs.DeleteModeOnly, false, deleteEmptySrcDirs, copyEmptySrcDirs)
+		do, err := newSyncCopyMove(ctx, fdst, "", fsrc, "", fs.DeleteModeOnly, false, deleteEmptySrcDirs, copyEmptySrcDirs, false)
 		if err != nil {
 			return err
 		}
@@ -1071,7 +1094,7 @@ func runSyncCopyMove(ctx context.Context, fdst, fsrc fs.Fs, deleteMode fs.Delete
 		// Next pass does a copy only
 		deleteMode = fs.DeleteModeOff
 	}
-	do, err := newSyncCopyMove(ctx, fdst, fsrc, deleteMode, DoMove, deleteEmptySrcDirs, copyEmptySrcDirs)
+	do, err := newSyncCopyMove(ctx, fdst, "", fsrc, "", deleteMode, DoMove, deleteEmptySrcDirs, copyEmptySrcDirs, false)
 	if err != nil {
 		return err
 	}
@@ -1087,6 +1110,15 @@ func Sync(ctx context.Context, fdst, fsrc fs.Fs, copyEmptySrcDirs bool) error {
 // CopyDir copies fsrc into fdst
 func CopyDir(ctx context.Context, fdst, fsrc fs.Fs, copyEmptySrcDirs bool) error {
 	return runSyncCopyMove(ctx, fdst, fsrc, fs.DeleteModeOff, false, false, copyEmptySrcDirs)
+}
+
+// CopyDir2 copies files from  fsrc/remoteSrc into fdst/remoteDst.
+func CopyDir2(ctx context.Context, fdst fs.Fs, remoteDst string, fsrc fs.Fs, remoteSrc string, copyEmptySrcDirs bool) error {
+	do, err := newSyncCopyMove(ctx, fdst, remoteDst, fsrc, remoteSrc, fs.DeleteModeOff, false, false, copyEmptySrcDirs, true)
+	if err != nil {
+		return err
+	}
+	return do.run()
 }
 
 // moveDir moves fsrc into fdst
