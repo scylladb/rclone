@@ -1264,18 +1264,19 @@ type Options struct {
 
 // Fs represents a remote s3 server
 type Fs struct {
-	name          string           // the name of the remote
-	root          string           // root of the bucket - ignore all objects above this
-	opt           Options          // parsed options
-	features      *fs.Features     // optional features
-	c             *s3.S3           // the connection to the s3 server
-	ses           *session.Session // the s3 session
-	rootBucket    string           // bucket part of root (if any)
-	rootDirectory string           // directory part of root (if any)
-	cache         *bucket.Cache    // cache for bucket creation status
-	pacer         *fs.Pacer        // To pace the API calls
-	srv           *http.Client     // a plain http client
-	pool          *pool.Pool       // memory pool
+	name          string                // the name of the remote
+	root          string                // root of the bucket - ignore all objects above this
+	opt           Options               // parsed options
+	features      *fs.Features          // optional features
+	c             *s3.S3                // the connection to the s3 server
+	ses           *session.Session      // the s3 session
+	rootBucket    string                // bucket part of root (if any)
+	rootDirectory string                // directory part of root (if any)
+	cache         *bucket.Cache         // cache for bucket creation status
+	pacer         *fs.Pacer             // To pace the API calls
+	srv           *http.Client          // a plain http client
+	tokens        *pacer.TokenDispenser // upload concurency tokens
+	pool          *pool.Pool            // memory pool
 }
 
 // Object describes a s3 object
@@ -1566,6 +1567,11 @@ func NewFs(name, root string, m configmap.Mapper) (fs.Fs, error) {
 		return nil, err
 	}
 
+	concurrency := opt.UploadConcurrency
+	if concurrency < 1 {
+		concurrency = 1
+	}
+
 	f := &Fs{
 		name:  name,
 		opt:   *opt,
@@ -1580,6 +1586,7 @@ func NewFs(name, root string, m configmap.Mapper) (fs.Fs, error) {
 			opt.UploadConcurrency*fs.Config.Transfers,
 			opt.MemoryPoolUseMmap,
 		),
+		tokens: pacer.NewTokenDispenser(concurrency),
 	}
 
 	f.setRoot(root)
@@ -2832,13 +2839,6 @@ var warnStreamUpload sync.Once
 func (o *Object) uploadMultipart(ctx context.Context, req *s3.PutObjectInput, size int64, in io.Reader) (err error) {
 	f := o.fs
 
-	// make concurrency machinery
-	concurrency := f.opt.UploadConcurrency
-	if concurrency < 1 {
-		concurrency = 1
-	}
-	tokens := pacer.NewTokenDispenser(concurrency)
-
 	uploadParts := f.opt.MaxUploadParts
 	if uploadParts < 1 {
 		uploadParts = 1
@@ -2909,13 +2909,13 @@ func (o *Object) uploadMultipart(ctx context.Context, req *s3.PutObjectInput, si
 
 	for partNum := int64(1); !finished; partNum++ {
 		// Get a block of memory from the pool and token which limits concurrency.
-		tokens.Get()
+		o.fs.tokens.Get()
 		buf := memPool.Get()
 
 		free := func() {
 			// return the memory and token
 			memPool.Put(buf)
-			tokens.Put()
+			o.fs.tokens.Put()
 		}
 
 		// Fail fast, in case an errgroup managed function returns an error
@@ -2967,6 +2967,10 @@ func (o *Object) uploadMultipart(ctx context.Context, req *s3.PutObjectInput, si
 				}
 				uout, err := f.c.UploadPartWithContext(gCtx, uploadPartReq)
 				if err != nil {
+					concurrency := f.opt.UploadConcurrency
+					if concurrency < 1 {
+						concurrency = 1
+					}
 					if partNum <= int64(concurrency) {
 						return f.shouldRetry(err)
 					}
@@ -2982,6 +2986,7 @@ func (o *Object) uploadMultipart(ctx context.Context, req *s3.PutObjectInput, si
 
 				return false, nil
 			})
+
 			if err != nil {
 				return errors.Wrap(err, "multipart upload failed to upload part")
 			}
