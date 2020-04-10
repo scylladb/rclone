@@ -195,8 +195,9 @@ func TestMarch(t *testing.T) {
 			m := &March{
 				Ctx:           ctx,
 				Fdst:          r.Fremote,
+				DstDir:        "",
 				Fsrc:          r.Flocal,
-				Dir:           "",
+				SrcDir:        "",
 				NoTraverse:    mt.noTraverse,
 				Callback:      mt,
 				DstIncludeAll: filter.Active.Opt.DeleteExcluded,
@@ -262,8 +263,9 @@ func TestMarchNoTraverse(t *testing.T) {
 			m := &March{
 				Ctx:           ctx,
 				Fdst:          r.Fremote,
+				DstDir:        "",
 				Fsrc:          r.Flocal,
-				Dir:           "",
+				SrcDir:        "",
 				NoTraverse:    mt.noTraverse,
 				Callback:      mt,
 				DstIncludeAll: filter.Active.Opt.DeleteExcluded,
