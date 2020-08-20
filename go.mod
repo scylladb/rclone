@@ -73,3 +73,5 @@ require (
 	gopkg.in/yaml.v3 v3.0.0-20200615113413-eeeca48fe776 // indirect
 	storj.io/uplink v1.4.1
 )
+
+replace google.golang.org/api v0.34.0 => github.com/scylladb/google-api-go-client v0.34.0-patched
