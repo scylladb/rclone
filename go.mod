@@ -2,7 +2,6 @@ module github.com/rclone/rclone
 
 require (
 	bazil.org/fuse v0.0.0-20191225233854-3a99aca11732
-	cloud.google.com/go v0.47.0 // indirect
 	github.com/Azure/azure-pipeline-go v0.2.2
 	github.com/Azure/azure-storage-blob-go v0.8.0
 	github.com/Azure/go-autorest/autorest/adal v0.6.0 // indirect
@@ -16,8 +15,6 @@ require (
 	github.com/djherbis/times v1.2.0
 	github.com/dropbox/dropbox-sdk-go-unofficial v5.4.0+incompatible
 	github.com/etcd-io/bbolt v1.3.3
-	github.com/golang/groupcache v0.0.0-20191027212112-611e8accdfc9 // indirect
-	github.com/google/go-cmp v0.3.1 // indirect
 	github.com/google/go-querystring v1.0.0 // indirect
 	github.com/gopherjs/gopherjs v0.0.0-20190812055157-5d271430af9f // indirect
 	github.com/jlaffaye/ftp v0.0.0-20191025175106-a59fe673c9b2
@@ -55,20 +52,18 @@ require (
 	github.com/youmark/pkcs8 v0.0.0-20191102193632-94c173a94d60
 	github.com/yunify/qingstor-sdk-go/v3 v3.1.1
 	go.etcd.io/bbolt v1.3.3 // indirect
-	go.opencensus.io v0.22.2 // indirect
 	goftp.io/server v0.0.0-20190812052725-72a57b186803
-	golang.org/x/crypto v0.0.0-20200109152110-61a87790db17
-	golang.org/x/net v0.0.0-20191109021931-daa7c04131f5
-	golang.org/x/oauth2 v0.0.0-20190604053449-0f29369cfe45
-	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e
-	golang.org/x/sys v0.0.0-20191210023423-ac6580df4449
-	golang.org/x/text v0.3.2
+	golang.org/x/crypto v0.0.0-20200622213623-75b288015ac9
+	golang.org/x/net v0.0.0-20200822124328-c89045814202
+	golang.org/x/oauth2 v0.0.0-20200107190931-bf48bf16ab8d
+	golang.org/x/sync v0.0.0-20200625203802-6e8e738ad208
+	golang.org/x/sys v0.0.0-20200828194041-157a740278f4
+	golang.org/x/text v0.3.3
 	golang.org/x/time v0.0.0-20191024005414-555d28b269f0
-	google.golang.org/api v0.13.0
-	google.golang.org/appengine v1.6.5 // indirect
-	google.golang.org/genproto v0.0.0-20191108220845-16a3f7862a1a // indirect
-	google.golang.org/grpc v1.25.1 // indirect
+	google.golang.org/api v0.30.0
 	gopkg.in/yaml.v2 v2.2.5
 )
 
 go 1.13
+
+replace google.golang.org/api v0.30.0 => github.com/scylladb/google-api-go-client v0.30.1-0.20200901094148-b1d4e0b17dda
