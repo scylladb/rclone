@@ -292,6 +292,11 @@ If size is zero, media will be uploaded in a single request.
 				Help:     `How many items are returned in one chunk during directory listing`,
 				Advanced: true,
 				Default:  listChunks,
+			}, {
+				Name: "allow_create_bucket",
+				Help: `Whether to create bucket if it doesn't exists.
+If bucket doesn't exists, error will be returned.'`,
+				Default: true,
 			},
 		},
 	})
@@ -311,6 +316,7 @@ type Options struct {
 	MemoryPoolFlushTime       fs.Duration          `config:"memory_pool_flush_time"`
 	MemoryPoolUseMmap         bool                 `config:"memory_pool_use_mmap"`
 	ChunkSize                 fs.SizeSuffix        `config:"chunk_size"`
+	AllowCreateBucket         bool                 `config:"allow_create_bucket"`
 }
 
 // Fs represents a remote storage server
@@ -804,6 +810,9 @@ func (f *Fs) makeBucket(ctx context.Context, bucket string) (err error) {
 		} else if gErr, ok := err.(*googleapi.Error); ok {
 			if gErr.Code != http.StatusNotFound {
 				return errors.Wrap(err, "failed to get bucket")
+			}
+			if !f.opt.AllowCreateBucket {
+				return errors.Wrapf(err, "bucket %s does not exist", bucket)
 			}
 		} else {
 			return errors.Wrap(err, "failed to get bucket")
