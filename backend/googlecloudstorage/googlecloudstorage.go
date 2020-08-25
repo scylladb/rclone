@@ -56,6 +56,9 @@ const (
 	metaMtime                   = "mtime" // key to store mtime under in metadata
 	listChunks                  = 1000    // chunk size to read directory listings
 	minSleep                    = 10 * time.Millisecond
+
+	memoryPoolFlushTime = fs.Duration(time.Minute) // flush the cached buffers after this long
+	memoryPoolUseMmap   = false
 )
 
 var (
@@ -248,14 +251,55 @@ Docs: https://cloud.google.com/storage/docs/bucket-policy-only
 				Value: "DURABLE_REDUCED_AVAILABILITY",
 				Help:  "Durable reduced availability storage class",
 			}},
-		}, {
-			Name:     config.ConfigEncoding,
-			Help:     config.ConfigEncodingHelp,
-			Advanced: true,
-			Default: (encoder.Base |
-				encoder.EncodeCrLf |
-				encoder.EncodeInvalidUtf8),
-		}}...),
+		},
+			{
+				Name:     config.ConfigEncoding,
+				Help:     config.ConfigEncodingHelp,
+				Advanced: true,
+				Default: (encoder.Base |
+					encoder.EncodeCrLf |
+					encoder.EncodeInvalidUtf8),
+			},
+			{
+				Name:     "memory_pool_flush_time",
+				Default:  memoryPoolFlushTime,
+				Advanced: true,
+				Help: `How often internal memory buffer pools will be flushed.
+Uploads which requires additional buffers (f.e multipart) will use memory pool for allocations.
+This option controls how often unused buffers will be removed from the pool.`,
+			}, {
+				Name:     "memory_pool_use_mmap",
+				Default:  memoryPoolUseMmap,
+				Advanced: true,
+				Help:     `Whether to use mmap buffers in internal memory pool.`,
+			},
+			{
+				Name: "chunk_size",
+				Help: `Chunk size to use for uploading.
+
+When uploading large files or files with unknown
+size (eg from "rclone rcat" or uploaded with "rclone mount" or google
+photos or google docs) they will be uploaded as multi chunk uploads
+using this chunk size.
+
+Files which contains fewer than size bytes will be uploaded in a single request.
+Files which contains size bytes or more will be uploaded in separate chunks.
+If size is zero, media will be uploaded in a single request.
+`,
+				Default:  googleapi.DefaultUploadChunkSize,
+				Advanced: true,
+			}, {
+				Name:     "list_chunk",
+				Help:     `How many items are returned in one chunk during directory listing`,
+				Advanced: true,
+				Default:  listChunks,
+			}, {
+				Name: "allow_create_bucket",
+				Help: `Whether to create bucket if it doesn't exists.
+If bucket doesn't exists, error will be returned.'`,
+				Default: true,
+			},
+		}...),
 	})
 }
 
@@ -271,6 +315,10 @@ type Options struct {
 	Location                  string               `config:"location"`
 	StorageClass              string               `config:"storage_class"`
 	Enc                       encoder.MultiEncoder `config:"encoding"`
+	MemoryPoolFlushTime       fs.Duration          `config:"memory_pool_flush_time"`
+	MemoryPoolUseMmap         bool                 `config:"memory_pool_use_mmap"`
+	ChunkSize                 fs.SizeSuffix        `config:"chunk_size"`
+	AllowCreateBucket         bool                 `config:"allow_create_bucket"`
 }
 
 // Fs represents a remote storage server
@@ -759,6 +807,9 @@ func (f *Fs) makeBucket(ctx context.Context, bucket string) (err error) {
 		} else if gErr, ok := err.(*googleapi.Error); ok {
 			if gErr.Code != http.StatusNotFound {
 				return errors.Wrap(err, "failed to get bucket")
+			}
+			if !f.opt.AllowCreateBucket {
+				return errors.Wrapf(err, "bucket %s does not exist", bucket)
 			}
 		} else {
 			return errors.Wrap(err, "failed to get bucket")
