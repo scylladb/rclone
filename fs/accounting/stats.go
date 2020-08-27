@@ -352,6 +352,8 @@ func (s *StatsInfo) String() string {
 // Transferred returns list of all completed transfers including checked and
 // failed ones.
 func (s *StatsInfo) Transferred() []TransferSnapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	ts := make([]TransferSnapshot, 0, len(s.startedTransfers))
 
 	for _, tr := range s.startedTransfers {
