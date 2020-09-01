@@ -55,7 +55,7 @@ func (cs *contentSniffer) Read(p []byte) (n int, err error) {
 	return cs.r.Read(p)
 }
 
-// ContentType returns the sniffed content type, and whether the content type was succesfully sniffed.
+// ContentType returns the sniffed content type, and whether the content type was successfully sniffed.
 func (cs *contentSniffer) ContentType() (string, bool) {
 	if cs.sniffed {
 		return cs.ctype, cs.ctype != ""
@@ -88,7 +88,7 @@ func DetermineContentType(media io.Reader, ctype string) (io.Reader, string) {
 		return media, ctype
 	}
 
-	// For backwards compatability, allow clients to set content
+	// For backwards compatibility, allow clients to set content
 	// type by providing a ContentTyper for media.
 	if typer, ok := media.(googleapi.ContentTyper); ok {
 		return media, typer.ContentType()
@@ -200,11 +200,16 @@ func typeHeader(contentType string) textproto.MIMEHeader {
 //
 // After PrepareUpload has been called, media should no longer be used: the
 // media content should be accessed via one of the return values.
-func PrepareUpload(media io.Reader, chunkSize int) (r io.Reader, mb *MediaBuffer, singleChunk bool) {
+func PrepareUpload(media io.Reader, chunkSize int, buffer []byte) (r io.Reader, mb *MediaBuffer, singleChunk bool) {
 	if chunkSize == 0 { // do not chunk
 		return media, nil, true
 	}
-	mb = NewMediaBuffer(media, chunkSize)
+	if buffer != nil {
+		mb = NewMediaBufferWithBuffer(media, chunkSize, buffer)
+	} else {
+		mb = NewMediaBuffer(media, chunkSize)
+	}
+
 	_, _, _, err := mb.Chunk()
 	// If err is io.EOF, we can upload this in a single request. Otherwise, err is
 	// either nil or a non-EOF error. If it is the latter, then the next call to
@@ -234,7 +239,7 @@ func NewInfoFromMedia(r io.Reader, options []googleapi.MediaOption) *MediaInfo {
 	if !opts.ForceEmptyContentType {
 		r, mi.mType = DetermineContentType(r, opts.ContentType)
 	}
-	mi.media, mi.buffer, mi.singleChunk = PrepareUpload(r, opts.ChunkSize)
+	mi.media, mi.buffer, mi.singleChunk = PrepareUpload(r, opts.ChunkSize, opts.Buffer)
 	return mi
 }
 
@@ -290,6 +295,9 @@ func (mi *MediaInfo) UploadRequest(reqHeaders http.Header, body io.Reader) (newB
 		fb := readerFunc(body)
 		fm := readerFunc(media)
 		combined, ctype := CombineBodyMedia(body, "application/json", media, mi.mType)
+		toCleanup := []io.Closer{
+			combined,
+		}
 		if fb != nil && fm != nil {
 			getBody = func() (io.ReadCloser, error) {
 				rb := ioutil.NopCloser(fb())
@@ -299,10 +307,16 @@ func (mi *MediaInfo) UploadRequest(reqHeaders http.Header, body io.Reader) (newB
 					mimeBoundary = params["boundary"]
 				}
 				r, _ := combineBodyMedia(rb, "application/json", rm, mi.mType, mimeBoundary)
+				toCleanup = append(toCleanup, r)
 				return r, nil
 			}
 		}
-		cleanup = func() { combined.Close() }
+		cleanup = func() {
+			for _, closer := range toCleanup {
+				_ = closer.Close()
+			}
+
+		}
 		reqHeaders.Set("Content-Type", ctype)
 		body = combined
 	}
