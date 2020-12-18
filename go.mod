@@ -67,4 +67,7 @@ require (
 	storj.io/uplink v1.2.0
 )
 
-replace google.golang.org/api v0.33.0 => github.com/scylladb/google-api-go-client v0.33.0-patched-1
+replace (
+	github.com/Azure/azure-storage-blob-go v0.11.0 => github.com/scylladb/azure-storage-blob-go v0.11.0-patched-1
+	google.golang.org/api v0.33.0 => github.com/scylladb/google-api-go-client v0.33.0-patched-1
+)
