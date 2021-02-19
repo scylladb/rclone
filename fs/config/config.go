@@ -26,10 +26,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/Unknwon/goconfig"
-	homedir "github.com/mitchellh/go-homedir"
+	"github.com/mitchellh/go-homedir"
 	"github.com/pkg/errors"
 	"github.com/rclone/rclone/fs"
-	"github.com/rclone/rclone/fs/accounting"
 	"github.com/rclone/rclone/fs/config/configmap"
 	"github.com/rclone/rclone/fs/config/configstruct"
 	"github.com/rclone/rclone/fs/config/obscure"
@@ -213,29 +212,7 @@ func makeConfigPath() string {
 
 // LoadConfig loads the config file
 func LoadConfig(ctx context.Context) {
-	// Set RCLONE_CONFIG_DIR for backend config and subprocesses
-	_ = os.Setenv("RCLONE_CONFIG_DIR", filepath.Dir(ConfigPath))
-
-	// Load configuration file.
-	var err error
-	configFile, err = loadConfigFile()
-	if err == errorConfigFileNotFound {
-		fs.Logf(nil, "Config file %q not found - using defaults", ConfigPath)
-		configFile, _ = goconfig.LoadFromReader(&bytes.Buffer{})
-	} else if err != nil {
-		log.Fatalf("Failed to load config file %q: %v", ConfigPath, err)
-	} else {
-		fs.Debugf(nil, "Using config file from %q", ConfigPath)
-	}
-
-	// Start the token bucket limiter
-	accounting.TokenBucket.StartTokenBucket(ctx)
-
-	// Start the bandwidth update ticker
-	accounting.TokenBucket.StartTokenTicker(ctx)
-
-	// Start the transactions per second limiter
-	accounting.StartLimitTPS(ctx)
+	panic("loading config from file")
 }
 
 var errorConfigFileNotFound = errors.New("config file not found")
