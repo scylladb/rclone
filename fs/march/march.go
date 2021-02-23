@@ -27,6 +27,7 @@ type March struct {
 	DstDir                 string          // destination directory
 	Fsrc                   fs.Fs           // dest Fs
 	SrcDir                 string          // source directory
+	Paths                  []string        // List of specific paths in source to traverse
 	NoTraverse             bool            // don't traverse the destination
 	SrcIncludeAll          bool            // don't include all files in the src
 	DstIncludeAll          bool            // don't include all files in the destination
@@ -80,6 +81,27 @@ type listDirFn func(dir string) (entries fs.DirEntries, err error)
 func (m *March) makeListDir(ctx context.Context, f fs.Fs, remote string, includeAll bool) listDirFn {
 	ci := fs.GetConfig(ctx)
 	fi := filter.GetConfig(ctx)
+
+	if m.Paths != nil {
+		return func(dir string) (entries fs.DirEntries, err error) {
+			content, err := list.DirSorted(m.Ctx, f, includeAll, dir)
+			if err != nil {
+				return
+			}
+		outer:
+			for _, e := range content {
+				for _, p := range m.Paths {
+					if e.Remote() == p {
+						entries = append(entries, e)
+						continue outer
+					}
+				}
+			}
+
+			return
+		}
+	}
+
 	if !(ci.UseListR && f.Features().ListR != nil) && // !--fast-list active and
 		!(ci.NoTraverse && fi.HaveFilesFrom()) { // !(--files-from and --no-traverse)
 		return func(dir string) (entries fs.DirEntries, err error) {
