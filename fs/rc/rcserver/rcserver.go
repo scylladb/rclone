@@ -18,11 +18,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/rclone/rclone/fs/rc/webgui"
-
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/rclone/rclone/fs/fshttp"
+	"github.com/rclone/rclone/fs/rc/webgui"
 	"github.com/skratchdot/open-golang/open"
 
 	"github.com/rclone/rclone/cmd/serve/httplib"
@@ -44,6 +44,13 @@ var onlyOnceWarningAllowOrigin sync.Once
 func init() {
 	rcloneCollector := accounting.NewRcloneCollector(context.Background(), "rclone_")
 	prometheus.MustRegister(rcloneCollector)
+
+	m := fshttp.NewMetrics("rclone")
+	for _, c := range m.Collectors() {
+		prometheus.MustRegister(c)
+	}
+	fshttp.DefaultMetrics = m
+
 	promHandler = promhttp.Handler()
 }
 
