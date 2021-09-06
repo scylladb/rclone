@@ -42,7 +42,7 @@ var promHandler http.Handler
 var onlyOnceWarningAllowOrigin sync.Once
 
 func init() {
-	rcloneCollector := accounting.NewRcloneCollector(context.Background())
+	rcloneCollector := accounting.NewRcloneCollector(context.Background(), "rclone_")
 	prometheus.MustRegister(rcloneCollector)
 	promHandler = promhttp.Handler()
 }
