@@ -26,6 +26,10 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
+	"google.golang.org/api/googleapi"
+
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/config"
 	"github.com/rclone/rclone/fs/config/configmap"
@@ -41,9 +45,6 @@ import (
 	"github.com/rclone/rclone/lib/oauthutil"
 	"github.com/rclone/rclone/lib/pacer"
 	"github.com/rclone/rclone/lib/pool"
-	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/google"
-	"google.golang.org/api/googleapi"
 
 	// NOTE: This API is deprecated
 	storage "google.golang.org/api/storage/v1"
@@ -1169,7 +1170,6 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 		mediaOpts := []googleapi.MediaOption{
 			googleapi.ContentType(""),
 			googleapi.ChunkSize(int(o.fs.opt.ChunkSize)),
-			googleapi.WithBuffer(buf),
 		}
 		insertObject := o.fs.svc.Objects.Insert(bucket, &object).Media(in, mediaOpts...).Name(object.Name)
 		if !o.fs.opt.BucketPolicyOnly {
