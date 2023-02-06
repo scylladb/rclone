@@ -1106,7 +1106,7 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 	}
 	var newObject *storage.Object
 	err = o.fs.pacer.CallNoRetry(func() (bool, error) {
-		insertObject := o.fs.svc.Objects.Insert(bucket, &object).Media(in, googleapi.ContentType(""), googleapi.ChunkSize(100*256)).Name(object.Name)
+		insertObject := o.fs.svc.Objects.Insert(bucket, &object).Media(in, googleapi.ContentType(""), googleapi.ChunkSize(1000*256)).Name(object.Name)
 		if !o.fs.opt.BucketPolicyOnly {
 			insertObject.PredefinedAcl(o.fs.opt.ObjectACL)
 		}
