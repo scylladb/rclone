@@ -3,11 +3,12 @@ package march
 
 import (
 	"context"
-	"fmt"
 	"path"
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/pkg/errors"
 
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/dirtree"
@@ -48,7 +49,6 @@ type Marcher interface {
 }
 
 // init sets up a march over opt.Fsrc, and opt.Fdst calling back callback for each match
-// Note: this will flag filter-aware backends on the source side
 func (m *March) init(ctx context.Context) {
 	ci := fs.GetConfig(ctx)
 	m.srcListDir = m.makeListDir(ctx, m.Fsrc, m.SrcIncludeAll)
@@ -76,15 +76,13 @@ type listDirFn func(dir string) (entries fs.DirEntries, err error)
 
 // makeListDir makes constructs a listing function for the given fs
 // and includeAll flags for marching through the file system.
-// Note: this will optionally flag filter-aware backends!
 func (m *March) makeListDir(ctx context.Context, f fs.Fs, includeAll bool) listDirFn {
 	ci := fs.GetConfig(ctx)
 	fi := filter.GetConfig(ctx)
 	if !(ci.UseListR && f.Features().ListR != nil) && // !--fast-list active and
 		!(ci.NoTraverse && fi.HaveFilesFrom()) { // !(--files-from and --no-traverse)
 		return func(dir string) (entries fs.DirEntries, err error) {
-			dirCtx := filter.SetUseFilter(m.Ctx, f.Features().FilterAware && !includeAll) // make filter-aware backends constrain List
-			return list.DirSorted(dirCtx, f, includeAll, dir)
+			return list.DirSorted(m.Ctx, f, includeAll, dir)
 		}
 	}
 
@@ -100,8 +98,7 @@ func (m *March) makeListDir(ctx context.Context, f fs.Fs, includeAll bool) listD
 		mu.Lock()
 		defer mu.Unlock()
 		if !started {
-			dirCtx := filter.SetUseFilter(m.Ctx, f.Features().FilterAware && !includeAll) // make filter-aware backends constrain List
-			dirs, dirsErr = walk.NewDirTree(dirCtx, f, m.Dir, includeAll, ci.MaxDepth)
+			dirs, dirsErr = walk.NewDirTree(m.Ctx, f, m.Dir, includeAll, ci.MaxDepth)
 			started = true
 		}
 		if dirsErr != nil {
@@ -215,7 +212,7 @@ func (m *March) Run(ctx context.Context) error {
 	wg.Wait()
 
 	if errCount > 1 {
-		return fmt.Errorf("march failed with %d error(s): first error: %w", errCount, jobError)
+		return errors.Wrapf(jobError, "march failed with %d error(s): first error", errCount)
 	}
 	return jobError
 }
@@ -407,22 +404,14 @@ func (m *March) processJob(job listDirJob) ([]listDirJob, error) {
 	// Wait for listings to complete and report errors
 	wg.Wait()
 	if srcListErr != nil {
-		if job.srcRemote != "" {
-			fs.Errorf(job.srcRemote, "error reading source directory: %v", srcListErr)
-		} else {
-			fs.Errorf(m.Fsrc, "error reading source root directory: %v", srcListErr)
-		}
+		fs.Errorf(job.srcRemote, "error reading source directory: %v", srcListErr)
 		srcListErr = fs.CountError(srcListErr)
 		return nil, srcListErr
 	}
 	if dstListErr == fs.ErrorDirNotFound {
 		// Copy the stuff anyway
 	} else if dstListErr != nil {
-		if job.dstRemote != "" {
-			fs.Errorf(job.dstRemote, "error reading destination directory: %v", dstListErr)
-		} else {
-			fs.Errorf(m.Fdst, "error reading destination root directory: %v", dstListErr)
-		}
+		fs.Errorf(job.dstRemote, "error reading destination directory: %v", dstListErr)
 		dstListErr = fs.CountError(dstListErr)
 		return nil, dstListErr
 	}

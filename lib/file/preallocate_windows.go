@@ -1,15 +1,13 @@
-//go:build windows
-// +build windows
+//+build windows
 
 package file
 
 import (
-	"fmt"
 	"os"
-	"sync"
 	"syscall"
 	"unsafe"
 
+	"github.com/pkg/errors"
 	"golang.org/x/sys/windows"
 )
 
@@ -17,7 +15,6 @@ var (
 	ntdll                        = windows.NewLazySystemDLL("ntdll.dll")
 	ntQueryVolumeInformationFile = ntdll.NewProc("NtQueryVolumeInformationFile")
 	ntSetInformationFile         = ntdll.NewProc("NtSetInformationFile")
-	preAllocateMu                sync.Mutex
 )
 
 type fileAllocationInformation struct {
@@ -45,9 +42,6 @@ func PreAllocate(size int64, out *os.File) error {
 		return nil
 	}
 
-	preAllocateMu.Lock()
-	defer preAllocateMu.Unlock()
-
 	var (
 		iosb       ioStatusBlock
 		fsSizeInfo fileFsSizeInformation
@@ -63,13 +57,13 @@ func PreAllocate(size int64, out *os.File) error {
 		uintptr(3), // FileFsSizeInformation
 	)
 	if e1 != nil && e1 != syscall.Errno(0) {
-		return fmt.Errorf("preAllocate NtQueryVolumeInformationFile failed: %w", e1)
+		return errors.Wrap(e1, "preAllocate NtQueryVolumeInformationFile failed")
 	}
 
 	// Calculate the allocation size
 	clusterSize := uint64(fsSizeInfo.BytesPerSector) * uint64(fsSizeInfo.SectorsPerAllocationUnit)
 	if clusterSize <= 0 {
-		return fmt.Errorf("preAllocate clusterSize %d <= 0", clusterSize)
+		return errors.Errorf("preAllocate clusterSize %d <= 0", clusterSize)
 	}
 	allocInfo.AllocationSize = (1 + uint64(size-1)/clusterSize) * clusterSize
 
@@ -82,17 +76,14 @@ func PreAllocate(size int64, out *os.File) error {
 		uintptr(19), // FileAllocationInformation
 	)
 	if e1 != nil && e1 != syscall.Errno(0) {
-		if e1 == syscall.Errno(windows.ERROR_DISK_FULL) || e1 == syscall.Errno(windows.ERROR_HANDLE_DISK_FULL) {
-			return ErrDiskFull
-		}
-		return fmt.Errorf("preAllocate NtSetInformationFile failed: %w", e1)
+		return errors.Wrap(e1, "preAllocate NtSetInformationFile failed")
 	}
 
 	return nil
 }
 
 const (
-	FSCTL_SET_SPARSE = 0x000900c4 // Control code to set or clears the FILE_ATTRIBUTE_SPARSE_FILE attribute of a file.
+	FSCTL_SET_SPARSE = 0x000900c4
 )
 
 // SetSparseImplemented is a constant indicating whether the
@@ -104,7 +95,7 @@ func SetSparse(out *os.File) error {
 	var bytesReturned uint32
 	err := syscall.DeviceIoControl(syscall.Handle(out.Fd()), FSCTL_SET_SPARSE, nil, 0, nil, 0, &bytesReturned, nil)
 	if err != nil {
-		return fmt.Errorf("DeviceIoControl FSCTL_SET_SPARSE: %w", err)
+		return errors.Wrap(err, "DeviceIoControl FSCTL_SET_SPARSE")
 	}
 	return nil
 }

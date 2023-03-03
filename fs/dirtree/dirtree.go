@@ -1,5 +1,5 @@
 // Package dirtree contains the DirTree type which is used for
-// building filesystem hierarchies in memory.
+// building filesystem heirachies in memory.
 package dirtree
 
 import (
@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/rclone/rclone/fs"
+	"github.com/rclone/rclone/lib/errors"
 )
 
 // DirTree is a map of directories to entries
@@ -40,12 +41,9 @@ func (dt DirTree) Add(entry fs.DirEntry) {
 // this creates the directory itself if required
 // it doesn't create parents
 func (dt DirTree) AddDir(entry fs.DirEntry) {
-	dirPath := entry.Remote()
-	if dirPath == "" {
-		return
-	}
 	dt.Add(entry)
 	// create the directory itself if it doesn't exist already
+	dirPath := entry.Remote()
 	if _, ok := dt[dirPath]; !ok {
 		dt[dirPath] = nil
 	}
@@ -155,7 +153,7 @@ func (dt DirTree) Prune(dirNames map[string]bool) error {
 			case fs.Object:
 				// do nothing
 			default:
-				return fmt.Errorf("unknown object type %T", entry)
+				return errors.Errorf("unknown object type %T", entry)
 
 			}
 		}
@@ -181,7 +179,7 @@ func (dt DirTree) Prune(dirNames map[string]bool) error {
 				case fs.Object:
 					// do nothing
 				default:
-					return fmt.Errorf("unknown object type %T", entry)
+					return errors.Errorf("unknown object type %T", entry)
 
 				}
 			}

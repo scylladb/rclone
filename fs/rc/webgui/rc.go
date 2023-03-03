@@ -16,13 +16,13 @@ func init() {
 		AuthRequired: true,
 		Fn:           rcListTestPlugins,
 		Title:        "Show currently loaded test plugins",
-		Help: `Allows listing of test plugins with the rclone.test set to true in package.json of the plugin.
+		Help: `allows listing of test plugins with the rclone.test set to true in package.json of the plugin
 
-This takes no parameters and returns:
+This takes no parameters and returns
 
-- loadedTestPlugins - list of currently available test plugins.
+- loadedTestPlugins: list of currently available test plugins
 
-E.g.
+Eg
 
     rclone rc pluginsctl/listTestPlugins
 `,
@@ -30,10 +30,6 @@ E.g.
 }
 
 func rcListTestPlugins(_ context.Context, _ rc.Params) (out rc.Params, err error) {
-	err = initPluginsOrError()
-	if err != nil {
-		return nil, err
-	}
 	return rc.Params{
 		"loadedTestPlugins": filterPlugins(loadedPlugins, func(json *PackageJSON) bool { return json.isTesting() }),
 	}, nil
@@ -45,23 +41,19 @@ func init() {
 		AuthRequired: true,
 		Fn:           rcRemoveTestPlugin,
 		Title:        "Remove  a test plugin",
-		Help: `This allows you to remove a plugin using it's name.
+		Help: `This allows you to remove a plugin using it's name
 
-This takes the following parameters:
+This takes the following parameters
 
-- name - name of the plugin in the format ` + "`author`/`plugin_name`" + `.
+- name: name of the plugin in the format ` + "`author`/`plugin_name`" + `
 
-Example:
+Eg
 
     rclone rc pluginsctl/removeTestPlugin name=rclone/rclone-webui-react
 `,
 	})
 }
 func rcRemoveTestPlugin(_ context.Context, in rc.Params) (out rc.Params, err error) {
-	err = initPluginsOrError()
-	if err != nil {
-		return nil, err
-	}
 	name, err := in.GetString("name")
 	if err != nil {
 		return nil, err
@@ -79,13 +71,13 @@ func init() {
 		AuthRequired: true,
 		Fn:           rcAddPlugin,
 		Title:        "Add a plugin using url",
-		Help: `Used for adding a plugin to the webgui.
+		Help: `used for adding a plugin to the webgui
 
-This takes the following parameters:
+This takes the following parameters
 
-- url - http url of the github repo where the plugin is hosted (http://github.com/rclone/rclone-webui-react).
+- url: http url of the github repo where the plugin is hosted (http://github.com/rclone/rclone-webui-react)
 
-Example:
+Eg
 
    rclone rc pluginsctl/addPlugin
 `,
@@ -93,16 +85,12 @@ Example:
 }
 
 func rcAddPlugin(_ context.Context, in rc.Params) (out rc.Params, err error) {
-	err = initPluginsOrError()
-	if err != nil {
-		return nil, err
-	}
 	pluginURL, err := in.GetString("url")
 	if err != nil {
 		return nil, err
 	}
 
-	author, repoName, repoBranch, err := getAuthorRepoBranchGitHub(pluginURL)
+	author, repoName, repoBranch, err := getAuthorRepoBranchGithub(pluginURL)
 	if err != nil {
 		return nil, err
 	}
@@ -191,12 +179,12 @@ func init() {
 		Title:        "Get the list of currently loaded plugins",
 		Help: `This allows you to get the currently enabled plugins and their details.
 
-This takes no parameters and returns:
+This takes no parameters and returns
 
-- loadedPlugins - list of current production plugins.
-- testPlugins - list of temporarily loaded development plugins, usually running on a different server.
+- loadedPlugins: list of current production plugins
+- testPlugins: list of temporarily loaded development plugins, usually running on a different server.
 
-E.g.
+Eg
 
    rclone rc pluginsctl/listPlugins
 `,
@@ -204,10 +192,6 @@ E.g.
 }
 
 func rcGetPlugins(_ context.Context, _ rc.Params) (out rc.Params, err error) {
-	err = initPluginsOrError()
-	if err != nil {
-		return nil, err
-	}
 	err = loadedPlugins.readFromFile()
 	if err != nil {
 		return nil, err
@@ -224,13 +208,13 @@ func init() {
 		AuthRequired: true,
 		Fn:           rcRemovePlugin,
 		Title:        "Remove a loaded plugin",
-		Help: `This allows you to remove a plugin using it's name.
+		Help: `This allows you to remove a plugin using it's name
 
-This takes parameters:
+This takes parameters
 
-- name - name of the plugin in the format ` + "`author`/`plugin_name`" + `.
+- name: name of the plugin in the format ` + "`author`/`plugin_name`" + `
 
-E.g.
+Eg
 
    rclone rc pluginsctl/removePlugin name=rclone/video-plugin
 `,
@@ -238,10 +222,6 @@ E.g.
 }
 
 func rcRemovePlugin(_ context.Context, in rc.Params) (out rc.Params, err error) {
-	err = initPluginsOrError()
-	if err != nil {
-		return nil, err
-	}
 	name, err := in.GetString("name")
 	if err != nil {
 		return nil, err
@@ -260,19 +240,19 @@ func init() {
 		AuthRequired: true,
 		Fn:           rcGetPluginsForType,
 		Title:        "Get plugins with type criteria",
-		Help: `This shows all possible plugins by a mime type.
+		Help: `This shows all possible plugins by a mime type
 
-This takes the following parameters:
+This takes the following parameters
 
-- type - supported mime type by a loaded plugin e.g. (video/mp4, audio/mp3).
-- pluginType - filter plugins based on their type e.g. (DASHBOARD, FILE_HANDLER, TERMINAL).
+- type: supported mime type by a loaded plugin e.g. (video/mp4, audio/mp3)
+- pluginType: filter plugins based on their type e.g. (DASHBOARD, FILE_HANDLER, TERMINAL) 
 
-Returns:
+and returns
 
-- loadedPlugins - list of current production plugins.
-- testPlugins - list of temporarily loaded development plugins, usually running on a different server.
+- loadedPlugins: list of current production plugins
+- testPlugins: list of temporarily loaded development plugins, usually running on a different server.
 
-Example:
+Eg
 
    rclone rc pluginsctl/getPluginsForType type=video/mp4
 `,
@@ -280,10 +260,6 @@ Example:
 }
 
 func rcGetPluginsForType(_ context.Context, in rc.Params) (out rc.Params, err error) {
-	err = initPluginsOrError()
-	if err != nil {
-		return nil, err
-	}
 	handlesType, err := in.GetString("type")
 	if err != nil {
 		handlesType = ""

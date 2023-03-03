@@ -3,10 +3,11 @@ package rc
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"testing"
 
+	"github.com/pkg/errors"
+	"github.com/rclone/rclone/cmd/serve/httplib"
 	"github.com/rclone/rclone/fs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -78,6 +79,7 @@ func TestOptionsGetMarshal(t *testing.T) {
 	ci := fs.GetConfig(ctx)
 
 	// Add some real options
+	AddOption("http", &httplib.DefaultOpt)
 	AddOption("main", ci)
 	AddOption("rc", &DefaultOpt)
 

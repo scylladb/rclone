@@ -67,8 +67,3 @@ func (r *Renew) Stop() {
 func (r *Renew) Invalidate() {
 	r.ts.Invalidate()
 }
-
-// Expire expires the token source
-func (r *Renew) Expire() error {
-	return r.ts.Expire()
-}

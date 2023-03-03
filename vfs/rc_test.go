@@ -12,14 +12,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func rcNewRun(t *testing.T, method string) (r *fstest.Run, vfs *VFS, call *rc.Call) {
+func rcNewRun(t *testing.T, method string) (r *fstest.Run, vfs *VFS, cleanup func(), call *rc.Call) {
 	if *fstest.RemoteName != "" {
 		t.Skip("Skipping test on non local remote")
 	}
-	r, vfs = newTestVFS(t)
+	r, vfs, cleanup = newTestVFS(t)
 	call = rc.Calls.Get(method)
 	assert.NotNil(t, call)
-	return r, vfs, call
+	return r, vfs, cleanup, call
 }
 
 func TestRcGetVFS(t *testing.T) {
@@ -29,7 +29,8 @@ func TestRcGetVFS(t *testing.T) {
 	assert.Contains(t, err.Error(), "no VFS active")
 	assert.Nil(t, vfs)
 
-	r, vfs2 := newTestVFS(t)
+	r, vfs2, cleanup := newTestVFS(t)
+	defer cleanup()
 
 	vfs, err = getVFS(in)
 	require.NoError(t, err)
@@ -64,7 +65,8 @@ func TestRcGetVFS(t *testing.T) {
 }
 
 func TestRcForget(t *testing.T) {
-	r, vfs, call := rcNewRun(t, "vfs/forget")
+	r, vfs, cleanup, call := rcNewRun(t, "vfs/forget")
+	defer cleanup()
 	_, _ = r, vfs
 	in := rc.Params{"fs": fs.ConfigString(r.Fremote)}
 	out, err := call.Fn(context.Background(), in)
@@ -76,7 +78,8 @@ func TestRcForget(t *testing.T) {
 }
 
 func TestRcRefresh(t *testing.T) {
-	r, vfs, call := rcNewRun(t, "vfs/refresh")
+	r, vfs, cleanup, call := rcNewRun(t, "vfs/refresh")
+	defer cleanup()
 	_, _ = r, vfs
 	in := rc.Params{"fs": fs.ConfigString(r.Fremote)}
 	out, err := call.Fn(context.Background(), in)
@@ -90,7 +93,8 @@ func TestRcRefresh(t *testing.T) {
 }
 
 func TestRcPollInterval(t *testing.T) {
-	r, vfs, call := rcNewRun(t, "vfs/poll-interval")
+	r, vfs, cleanup, call := rcNewRun(t, "vfs/poll-interval")
+	defer cleanup()
 	_ = vfs
 	if r.Fremote.Features().ChangeNotify == nil {
 		t.Skip("ChangeNotify not supported")
@@ -102,7 +106,8 @@ func TestRcPollInterval(t *testing.T) {
 }
 
 func TestRcList(t *testing.T) {
-	r, vfs, call := rcNewRun(t, "vfs/list")
+	r, vfs, cleanup, call := rcNewRun(t, "vfs/list")
+	defer cleanup()
 	_ = vfs
 
 	out, err := call.Fn(context.Background(), nil)
@@ -113,15 +118,4 @@ func TestRcList(t *testing.T) {
 			fs.ConfigString(r.Fremote),
 		},
 	}, out)
-}
-
-func TestRcStats(t *testing.T) {
-	r, vfs, call := rcNewRun(t, "vfs/stats")
-	out, err := call.Fn(context.Background(), nil)
-	require.NoError(t, err)
-	assert.Equal(t, fs.ConfigString(r.Fremote), out["fs"])
-	assert.Equal(t, int32(1), out["inUse"])
-	assert.Equal(t, 0, out["metadataCache"].(rc.Params)["files"])
-	assert.Equal(t, 1, out["metadataCache"].(rc.Params)["dirs"])
-	assert.Equal(t, vfs.Opt, out["opt"].(vfscommon.Options))
 }

@@ -1,11 +1,10 @@
 package swift
 
 import (
-	"context"
 	"testing"
 	"time"
 
-	"github.com/ncw/swift/v2"
+	"github.com/ncw/swift"
 	"github.com/rclone/rclone/fs/fserrors"
 	"github.com/stretchr/testify/assert"
 )
@@ -16,8 +15,8 @@ func TestInternalUrlEncode(t *testing.T) {
 		want string
 	}{
 		{"", ""},
-		{"abcdefghijklmnopqrstuvwxyz", "abcdefghijklmnopqrstuvwxyz"},
-		{"ABCDEFGHIJKLMNOPQRSTUVWXYZ", "ABCDEFGHIJKLMNOPQRSTUVWXYZ"},
+		{"abcdefghijklmopqrstuvwxyz", "abcdefghijklmopqrstuvwxyz"},
+		{"ABCDEFGHIJKLMOPQRSTUVWXYZ", "ABCDEFGHIJKLMOPQRSTUVWXYZ"},
 		{"0123456789", "0123456789"},
 		{"abc/ABC/123", "abc/ABC/123"},
 		{"   ", "%20%20%20"},
@@ -33,7 +32,6 @@ func TestInternalUrlEncode(t *testing.T) {
 }
 
 func TestInternalShouldRetryHeaders(t *testing.T) {
-	ctx := context.Background()
 	headers := swift.Headers{
 		"Content-Length": "64",
 		"Content-Type":   "text/html; charset=UTF-8",
@@ -47,7 +45,7 @@ func TestInternalShouldRetryHeaders(t *testing.T) {
 
 	// Short sleep should just do the sleep
 	start := time.Now()
-	retry, gotErr := shouldRetryHeaders(ctx, headers, err)
+	retry, gotErr := shouldRetryHeaders(headers, err)
 	dt := time.Since(start)
 	assert.True(t, retry)
 	assert.Equal(t, err, gotErr)
@@ -56,7 +54,7 @@ func TestInternalShouldRetryHeaders(t *testing.T) {
 	// Long sleep should return RetryError
 	headers["Retry-After"] = "3600"
 	start = time.Now()
-	retry, gotErr = shouldRetryHeaders(ctx, headers, err)
+	retry, gotErr = shouldRetryHeaders(headers, err)
 	dt = time.Since(start)
 	assert.True(t, dt < time.Second)
 	assert.False(t, retry)

@@ -3,6 +3,7 @@ package downloaders
 import (
 	"context"
 	"io"
+	"io/ioutil"
 	"sync"
 	"testing"
 	"time"
@@ -52,7 +53,7 @@ func (item *testItem) FindMissing(r ranges.Range) (outr ranges.Range) {
 // WriteAtNoOverwrite writes b to the file, but will not overwrite
 // already present ranges.
 //
-// This is used by the downloader to write bytes to the file.
+// This is used by the downloader to write bytes to the file
 //
 // It returns n the total bytes processed and skipped the number of
 // bytes which were processed but not actually written to the file.
@@ -75,6 +76,7 @@ func (item *testItem) WriteAtNoOverwrite(b []byte, off int64) (n int, skipped in
 
 func TestDownloaders(t *testing.T) {
 	r := fstest.NewRun(t)
+	defer r.Finalise()
 
 	var (
 		ctx    = context.Background()
@@ -83,8 +85,8 @@ func TestDownloaders(t *testing.T) {
 	)
 
 	// Write the test file
-	in := io.NopCloser(readers.NewPatternReader(size))
-	src, err := operations.RcatSize(ctx, r.Fremote, remote, in, size, time.Now(), nil)
+	in := ioutil.NopCloser(readers.NewPatternReader(size))
+	src, err := operations.RcatSize(ctx, r.Fremote, remote, in, size, time.Now())
 	require.NoError(t, err)
 	assert.Equal(t, size, src.Size())
 

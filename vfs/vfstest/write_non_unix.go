@@ -1,4 +1,3 @@
-//go:build !linux && !darwin && !freebsd
 // +build !linux,!darwin,!freebsd
 
 package vfstest
@@ -17,7 +16,10 @@ func TestWriteFileDoubleClose(t *testing.T) {
 
 // writeTestDup performs the platform-specific implementation of the dup() syscall
 func writeTestDup(oldfd uintptr) (uintptr, error) {
-	p := windows.CurrentProcess()
+	p, err := windows.GetCurrentProcess()
+	if err != nil {
+		return 0, err
+	}
 	var h windows.Handle
 	return uintptr(h), windows.DuplicateHandle(p, windows.Handle(oldfd), p, &h, 0, true, windows.DUPLICATE_SAME_ACCESS)
 }

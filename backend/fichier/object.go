@@ -2,12 +2,11 @@ package fichier
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/hash"
 	"github.com/rclone/rclone/lib/rest"
@@ -73,10 +72,6 @@ func (o *Object) SetModTime(context.Context, time.Time) error {
 	//return errors.New("setting modtime is not supported for 1fichier remotes")
 }
 
-func (o *Object) setMetaData(file File) {
-	o.file = file
-}
-
 // Open opens the file for read.  Call Close() on the returned io.ReadCloser
 func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadCloser, error) {
 	fs.FixRangeOption(options, o.file.Size)
@@ -95,7 +90,7 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 
 	err = o.fs.pacer.Call(func() (bool, error) {
 		resp, err = o.fs.rest.Call(ctx, &opts)
-		return shouldRetry(ctx, resp, err)
+		return shouldRetry(resp, err)
 	})
 
 	if err != nil {
@@ -123,7 +118,7 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 	// Delete duplicate after successful upload
 	err = o.Remove(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to remove old version: %w", err)
+		return errors.Wrap(err, "failed to remove old version")
 	}
 
 	// Replace guts of old object with new one

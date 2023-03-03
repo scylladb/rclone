@@ -1,13 +1,13 @@
-// Package api provides types used by the Backblaze B2 API.
 package api
 
 import (
 	"fmt"
+	"path"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/rclone/rclone/fs/fserrors"
-	"github.com/rclone/rclone/lib/version"
 )
 
 // Error describes a B2 error response
@@ -63,17 +63,16 @@ func (t *Timestamp) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// HasVersion returns true if it looks like the passed filename has a timestamp on it.
-//
-// Note that the passed filename's timestamp may still be invalid even if this
-// function returns true.
-func HasVersion(remote string) bool {
-	return version.Match(remote)
-}
+const versionFormat = "-v2006-01-02-150405.000"
 
 // AddVersion adds the timestamp as a version string into the filename passed in.
 func (t Timestamp) AddVersion(remote string) string {
-	return version.Add(remote, time.Time(t))
+	ext := path.Ext(remote)
+	base := remote[:len(remote)-len(ext)]
+	s := time.Time(t).Format(versionFormat)
+	// Replace the '.' with a '-'
+	s = strings.Replace(s, ".", "-", -1)
+	return base + s + ext
 }
 
 // RemoveVersion removes the timestamp from a filename as a version string.
@@ -81,9 +80,24 @@ func (t Timestamp) AddVersion(remote string) string {
 // It returns the new file name and a timestamp, or the old filename
 // and a zero timestamp.
 func RemoveVersion(remote string) (t Timestamp, newRemote string) {
-	time, newRemote := version.Remove(remote)
-	t = Timestamp(time)
-	return
+	newRemote = remote
+	ext := path.Ext(remote)
+	base := remote[:len(remote)-len(ext)]
+	if len(base) < len(versionFormat) {
+		return
+	}
+	versionStart := len(base) - len(versionFormat)
+	// Check it ends in -xxx
+	if base[len(base)-4] != '-' {
+		return
+	}
+	// Replace with .xxx for parsing
+	base = base[:len(base)-4] + "." + base[len(base)-3:]
+	newT, err := time.Parse(versionFormat, base[versionStart:])
+	if err != nil {
+		return
+	}
+	return Timestamp(newT), base[:versionStart] + ext
 }
 
 // IsZero returns true if the timestamp is uninitialized
@@ -239,7 +253,7 @@ type GetFileInfoRequest struct {
 // If the original source of the file being uploaded has a last
 // modified time concept, Backblaze recommends using
 // src_last_modified_millis as the name, and a string holding the base
-// 10 number of milliseconds since midnight, January 1, 1970
+// 10 number number of milliseconds since midnight, January 1, 1970
 // UTC. This fits in a 64 bit integer such as the type "long" in the
 // programming language Java. It is intended to be compatible with
 // Java's time long. For example, it can be passed directly into the

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
@@ -55,7 +56,7 @@ func main() {
 		log.Fatalf("Syntax: %s", os.Args[0])
 	}
 	// v1.54.0
-	versionBytes, err := os.ReadFile("VERSION")
+	versionBytes, err := ioutil.ReadFile("VERSION")
 	if err != nil {
 		log.Fatalf("Failed to read version: %v", err)
 	}

@@ -35,7 +35,6 @@ func TestIntegration(t *testing.T) {
 			"MimeType",
 			"GetTier",
 			"SetTier",
-			"Metadata",
 		},
 		UnimplementableFsMethods: []string{
 			"PublicLink",
@@ -54,7 +53,6 @@ func TestIntegration(t *testing.T) {
 			{Name: name, Key: "type", Value: "chunker"},
 			{Name: name, Key: "remote", Value: tempDir},
 		}
-		opt.QuickTestOK = true
 	}
 	fstests.Run(t, &opt)
 }

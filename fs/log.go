@@ -4,8 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
 
+	sysdjournald "github.com/iguanesolutions/go-systemd/v5/journald"
+	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
 
@@ -15,14 +16,14 @@ type LogLevel byte
 // Log levels.  These are the syslog levels of which we only use a
 // subset.
 //
-//	LOG_EMERG      system is unusable
-//	LOG_ALERT      action must be taken immediately
-//	LOG_CRIT       critical conditions
-//	LOG_ERR        error conditions
-//	LOG_WARNING    warning conditions
-//	LOG_NOTICE     normal, but significant, condition
-//	LOG_INFO       informational message
-//	LOG_DEBUG      debug-level message
+//    LOG_EMERG      system is unusable
+//    LOG_ALERT      action must be taken immediately
+//    LOG_CRIT       critical conditions
+//    LOG_ERR        error conditions
+//    LOG_WARNING    warning conditions
+//    LOG_NOTICE     normal, but significant, condition
+//    LOG_INFO       informational message
+//    LOG_DEBUG      debug-level message
 const (
 	LogLevelEmergency LogLevel = iota
 	LogLevelAlert
@@ -61,7 +62,7 @@ func (l *LogLevel) Set(s string) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("unknown log level %q", s)
+	return errors.Errorf("Unknown log level %q", s)
 }
 
 // Type of the value
@@ -69,34 +70,37 @@ func (l *LogLevel) Type() string {
 	return "string"
 }
 
-// UnmarshalJSON makes sure the value can be parsed as a string or integer in JSON
-func (l *LogLevel) UnmarshalJSON(in []byte) error {
-	return UnmarshalJSONFlag(in, l, func(i int64) error {
-		if i < 0 || i >= int64(LogLevel(len(logLevelToString))) {
-			return fmt.Errorf("unknown log level %d", i)
-		}
-		*l = (LogLevel)(i)
-		return nil
-	})
-}
-
-// LogPrintPid enables process pid in log
-var LogPrintPid = false
-
 // LogPrint sends the text to the logger of level
 var LogPrint = func(level LogLevel, text string) {
-	text = fmt.Sprintf("%-6s: %s", level, text)
-	if LogPrintPid {
-		text = fmt.Sprintf("[%d] %s", os.Getpid(), text)
+	var prefix string
+	if GetConfig(context.TODO()).LogSystemdSupport {
+		switch level {
+		case LogLevelDebug:
+			prefix = sysdjournald.DebugPrefix
+		case LogLevelInfo:
+			prefix = sysdjournald.InfoPrefix
+		case LogLevelNotice:
+			prefix = sysdjournald.NoticePrefix
+		case LogLevelWarning:
+			prefix = sysdjournald.WarningPrefix
+		case LogLevelError:
+			prefix = sysdjournald.ErrPrefix
+		case LogLevelCritical:
+			prefix = sysdjournald.CritPrefix
+		case LogLevelAlert:
+			prefix = sysdjournald.AlertPrefix
+		case LogLevelEmergency:
+			prefix = sysdjournald.EmergPrefix
+		}
 	}
+	text = fmt.Sprintf("%s%-6s: %s", prefix, level, text)
 	_ = log.Output(4, text)
 }
 
 // LogValueItem describes keyed item for a JSON log entry
 type LogValueItem struct {
-	key    string
-	value  interface{}
-	render bool
+	key   string
+	value interface{}
 }
 
 // LogValue should be used as an argument to any logging calls to
@@ -104,31 +108,14 @@ type LogValueItem struct {
 //
 // key is the dictionary parameter used to store value.
 func LogValue(key string, value interface{}) LogValueItem {
-	return LogValueItem{key: key, value: value, render: true}
+	return LogValueItem{key: key, value: value}
 }
 
-// LogValueHide should be used as an argument to any logging calls to
-// augment the JSON output with more structured information.
-//
-// key is the dictionary parameter used to store value.
-//
-// String() will return a blank string - this is useful to put items
-// in which don't print into the log.
-func LogValueHide(key string, value interface{}) LogValueItem {
-	return LogValueItem{key: key, value: value, render: false}
-}
-
-// String returns the representation of value. If render is fals this
-// is an empty string so LogValueItem entries won't show in the
-// textual representation of logs.
+// String returns an empty string so LogValueItem entries won't show
+// in the textual representation of logs. They need to be put in so
+// the number of parameters of the log call matches.
 func (j LogValueItem) String() string {
-	if !j.render {
-		return ""
-	}
-	if do, ok := j.value.(fmt.Stringer); ok {
-		return do.String()
-	}
-	return fmt.Sprint(j.value)
+	return ""
 }
 
 // LogPrintf produces a log string from the arguments passed in
@@ -186,8 +173,8 @@ func Errorf(o interface{}, text string, args ...interface{}) {
 }
 
 // Logf writes log output for this Object or Fs.  This should be
-// considered to be Notice level logging.  It is the default level.
-// By default rclone should not log very much so only use this for
+// considered to be Info level logging.  It is the default level.  By
+// default rclone should not log very much so only use this for
 // important things the user should see.  The user can filter these
 // out with the -q flag.
 func Logf(o interface{}, text string, args ...interface{}) {

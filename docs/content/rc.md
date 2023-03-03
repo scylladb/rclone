@@ -1,18 +1,14 @@
 ---
 title: "Remote Control / API"
 description: "Remote controlling rclone with its API"
-versionIntroduced: "v1.40"
 ---
 
 # Remote controlling rclone with its API
 
-If rclone is run with the `--rc` flag then it starts an HTTP server
+If rclone is run with the `--rc` flag then it starts an http server
 which can be used to remote control rclone using its API.
 
-You can either use the [rc](#api-rc) command to access the API
-or [use HTTP directly](#api-http).
-
-If you just want to run a remote control then see the [rcd](/commands/rclone_rcd/) command.
+If you just want to run a remote control then see the [rcd command](/commands/rclone_rcd/).
 
 ## Supported parameters
 
@@ -41,11 +37,6 @@ SSL PEM Private key
 ### --rc-max-header-bytes=VALUE
 
 Maximum size of request header (default 4096)
-
-### --rc-min-tls-version=VALUE
-
-The minimum TLS version that is acceptable. Valid values are "tls1.0",
-"tls1.1", "tls1.2" and "tls1.3" (default "tls1.0").
 
 ### --rc-user=VALUE
 
@@ -156,17 +147,7 @@ use these methods.  The alternative is to use `--rc-user` and
 
 Default Off.
 
-### --rc-baseurl
-
-Prefix for URLs.
-
-Default is root
-
-### --rc-template
-
-User-specified template.
-
-## Accessing the remote control via the rclone rc command {#api-rc}
+## Accessing the remote control via the rclone rc command
 
 Rclone itself implements the remote control protocol in its `rclone
 rc` command.
@@ -218,6 +199,8 @@ Rather than
 ```
 rclone rc operations/list --json '{"fs": "/tmp", "remote": "test", "opt": {"showHash": true}}'
 ```
+
+
 
 ## Special parameters
 
@@ -289,69 +272,6 @@ $ rclone rc job/list
 }
 ```
 
-### Setting config flags with _config
-
-If you wish to set config (the equivalent of the global flags) for the
-duration of an rc call only then pass in the `_config` parameter.
-
-This should be in the same format as the `config` key returned by
-[options/get](#options-get).
-
-For example, if you wished to run a sync with the `--checksum`
-parameter, you would pass this parameter in your JSON blob.
-
-    "_config":{"CheckSum": true}
-
-If using `rclone rc` this could be passed as
-
-    rclone rc operations/sync ... _config='{"CheckSum": true}'
-
-Any config parameters you don't set will inherit the global defaults
-which were set with command line flags or environment variables.
-
-Note that it is possible to set some values as strings or integers -
-see [data types](#data-types) for more info. Here is an example
-setting the equivalent of `--buffer-size` in string or integer format.
-
-    "_config":{"BufferSize": "42M"}
-    "_config":{"BufferSize": 44040192}
-
-If you wish to check the `_config` assignment has worked properly then
-calling `options/local` will show what the value got set to.
-
-### Setting filter flags with _filter
-
-If you wish to set filters for the duration of an rc call only then
-pass in the `_filter` parameter.
-
-This should be in the same format as the `filter` key returned by
-[options/get](#options-get).
-
-For example, if you wished to run a sync with these flags
-
-    --max-size 1M --max-age 42s --include "a" --include "b"
-
-you would pass this parameter in your JSON blob.
-
-    "_filter":{"MaxSize":"1M", "IncludeRule":["a","b"], "MaxAge":"42s"}
-
-If using `rclone rc` this could be passed as
-
-    rclone rc ... _filter='{"MaxSize":"1M", "IncludeRule":["a","b"], "MaxAge":"42s"}'
-
-Any filter parameters you don't set will inherit the global defaults
-which were set with command line flags or environment variables.
-
-Note that it is possible to set some values as strings or integers -
-see [data types](#data-types) for more info. Here is an example
-setting the equivalent of `--buffer-size` in string or integer format.
-
-    "_filter":{"MinSize": "42M"}
-    "_filter":{"MinSize": 44040192}
-
-If you wish to check the `_filter` assignment has worked properly then
-calling `options/local` will show what the value got set to.
-
 ### Assigning operations to groups with _group = value
 
 Each rc call has its own stats group for tracking its metrics. By default
@@ -371,94 +291,22 @@ $ rclone rc --json '{ "group": "job/1" }' core/stats
 }
 ```
 
-## Data types {#data-types}
-
-When the API returns types, these will mostly be straight forward
-integer, string or boolean types.
-
-However some of the types returned by the [options/get](#options-get)
-call and taken by the [options/set](#options-set) calls as well as the
-`vfsOpt`, `mountOpt` and the `_config` parameters.
-
-- `Duration` - these are returned as an integer duration in
-  nanoseconds. They may be set as an integer, or they may be set with
-  time string, eg "5s". See the [options section](/docs/#options) for
-  more info.
-- `Size` - these are returned as an integer number of bytes. They may
-  be set as an integer or they may be set with a size suffix string,
-  eg "10M". See the [options section](/docs/#options) for more info.
-- Enumerated type (such as `CutoffMode`, `DumpFlags`, `LogLevel`,
-  `VfsCacheMode` - these will be returned as an integer and may be set
-  as an integer but more conveniently they can be set as a string, eg
-  "HARD" for `CutoffMode` or `DEBUG` for `LogLevel`.
-- `BandwidthSpec` - this will be set and returned as a string, eg
-  "1M".
-
-## Specifying remotes to work on
-
-Remotes are specified with the `fs=`, `srcFs=`, `dstFs=`
-parameters depending on the command being used.
-
-The parameters can be a string as per the rest of rclone, eg
-`s3:bucket/path` or `:sftp:/my/dir`. They can also be specified as
-JSON blobs.
-
-If specifying a JSON blob it should be a object mapping strings to
-strings. These values will be used to configure the remote. There are
-3 special values which may be set:
-
-- `type` -  set to `type` to specify a remote called `:type:`
-- `_name` - set to `name` to specify a remote called `name:`
-- `_root` - sets the root of the remote - may be empty
-
-One of `_name` or `type` should normally be set. If the `local`
-backend is desired then `type` should be set to `local`. If `_root`
-isn't specified then it defaults to the root of the remote.
-
-For example this JSON is equivalent to `remote:/tmp`
-
-```
-{
-    "_name": "remote",
-    "_path": "/tmp"
-}
-```
-
-And this is equivalent to `:sftp,host='example.com':/tmp`
-
-```
-{
-    "type": "sftp",
-    "host": "example.com",
-    "_path": "/tmp"
-}
-```
-
-And this is equivalent to `/tmp/dir`
-
-```
-{
-    type = "local",
-    _ path = "/tmp/dir"
-}
-```
-
 ## Supported commands
 {{< rem autogenerated start "- run make rcdocs - don't edit here" >}}
 ### backend/command: Runs a backend command. {#backend-command}
 
-This takes the following parameters:
+This takes the following parameters
 
 - command - a string with the command name
 - fs - a remote name string e.g. "drive:"
 - arg - a list of arguments for the backend command
 - opt - a map of string to string of options
 
-Returns:
+Returns
 
 - result - result from the backend command
 
-Example:
+For example
 
     rclone rc backend/command command=noop fs=. -o echo=yes -o blue -a path1 -a path2
 
@@ -536,22 +384,16 @@ Show statistics for the cache remote.
 
 ### config/create: create the config for a remote. {#config-create}
 
-This takes the following parameters:
+This takes the following parameters
 
 - name - name of remote
 - parameters - a map of \{ "key": "value" \} pairs
 - type - type of the new remote
-- opt - a dictionary of options to control the configuration
-    - obscure - declare passwords are plain and need obscuring
-    - noObscure - declare passwords are already obscured and don't need obscuring
-    - nonInteractive - don't interact with a user, return questions
-    - continue - continue the config process with an answer
-    - all - ask all the config questions not just the post config ones
-    - state - state to restart with - used with continue
-    - result - result to restart with - used with continue
+- obscure - optional bool - forces obscuring of passwords
+- noObscure - optional bool - forces passwords not to be obscured
 
 
-See the [config create](/commands/rclone_config_create/) command for more information on the above.
+See the [config create command](/commands/rclone_config_create/) command for more information on the above.
 
 **Authentication is required for this call.**
 
@@ -561,7 +403,7 @@ Parameters:
 
 - name - name of remote to delete
 
-See the [config delete](/commands/rclone_config_delete/) command for more information on the above.
+See the [config delete command](/commands/rclone_config_delete/) command for more information on the above.
 
 **Authentication is required for this call.**
 
@@ -572,7 +414,7 @@ Returns a JSON object:
 
 Where keys are remote names and values are the config parameters.
 
-See the [config dump](/commands/rclone_config_dump/) command for more information on the above.
+See the [config dump command](/commands/rclone_config_dump/) command for more information on the above.
 
 **Authentication is required for this call.**
 
@@ -582,7 +424,7 @@ Parameters:
 
 - name - name of remote to get
 
-See the [config dump](/commands/rclone_config_dump/) command for more information on the above.
+See the [config dump command](/commands/rclone_config_dump/) command for more information on the above.
 
 **Authentication is required for this call.**
 
@@ -591,19 +433,19 @@ See the [config dump](/commands/rclone_config_dump/) command for more informatio
 Returns
 - remotes - array of remote names
 
-See the [listremotes](/commands/rclone_listremotes/) command for more information on the above.
+See the [listremotes command](/commands/rclone_listremotes/) command for more information on the above.
 
 **Authentication is required for this call.**
 
 ### config/password: password the config for a remote. {#config-password}
 
-This takes the following parameters:
+This takes the following parameters
 
 - name - name of remote
 - parameters - a map of \{ "key": "value" \} pairs
 
 
-See the [config password](/commands/rclone_config_password/) command for more information on the above.
+See the [config password command](/commands/rclone_config_password/) command for more information on the above.
 
 **Authentication is required for this call.**
 
@@ -612,64 +454,38 @@ See the [config password](/commands/rclone_config_password/) command for more in
 Returns a JSON object:
 - providers - array of objects
 
-See the [config providers](/commands/rclone_config_providers/) command for more information on the above.
-
-**Authentication is required for this call.**
-
-### config/setpath: Set the path of the config file {#config-setpath}
-
-Parameters:
-
-- path - path to the config file to use
+See the [config providers command](/commands/rclone_config_providers/) command for more information on the above.
 
 **Authentication is required for this call.**
 
 ### config/update: update the config for a remote. {#config-update}
 
-This takes the following parameters:
+This takes the following parameters
 
 - name - name of remote
 - parameters - a map of \{ "key": "value" \} pairs
-- opt - a dictionary of options to control the configuration
-    - obscure - declare passwords are plain and need obscuring
-    - noObscure - declare passwords are already obscured and don't need obscuring
-    - nonInteractive - don't interact with a user, return questions
-    - continue - continue the config process with an answer
-    - all - ask all the config questions not just the post config ones
-    - state - state to restart with - used with continue
-    - result - result to restart with - used with continue
+- obscure - optional bool - forces obscuring of passwords
+- noObscure - optional bool - forces passwords not to be obscured
 
 
-See the [config update](/commands/rclone_config_update/) command for more information on the above.
+See the [config update command](/commands/rclone_config_update/) command for more information on the above.
 
 **Authentication is required for this call.**
 
 ### core/bwlimit: Set the bandwidth limit. {#core-bwlimit}
 
-This sets the bandwidth limit to the string passed in. This should be
-a single bandwidth limit entry or a pair of upload:download bandwidth.
+This sets the bandwidth limit to that passed in.
 
 Eg
 
     rclone rc core/bwlimit rate=off
     {
         "bytesPerSecond": -1,
-        "bytesPerSecondTx": -1,
-        "bytesPerSecondRx": -1,
         "rate": "off"
     }
     rclone rc core/bwlimit rate=1M
     {
         "bytesPerSecond": 1048576,
-        "bytesPerSecondTx": 1048576,
-        "bytesPerSecondRx": 1048576,
-        "rate": "1M"
-    }
-    rclone rc core/bwlimit rate=1M:100k
-    {
-        "bytesPerSecond": 1048576,
-        "bytesPerSecondTx": 1048576,
-        "bytesPerSecondRx": 131072,
         "rate": "1M"
     }
 
@@ -679,42 +495,35 @@ If the rate parameter is not supplied then the bandwidth is queried
     rclone rc core/bwlimit
     {
         "bytesPerSecond": 1048576,
-        "bytesPerSecondTx": 1048576,
-        "bytesPerSecondRx": 1048576,
         "rate": "1M"
     }
 
 The format of the parameter is exactly the same as passed to --bwlimit
 except only one bandwidth may be specified.
 
-In either case "rate" is returned as a human-readable string, and
+In either case "rate" is returned as a human readable string, and
 "bytesPerSecond" is returned as a number.
 
 ### core/command: Run a rclone terminal command over rc. {#core-command}
 
-This takes the following parameters:
+This takes the following parameters
 
-- command - a string with the command name.
-- arg - a list of arguments for the backend command.
-- opt - a map of string to string of options.
-- returnType - one of ("COMBINED_OUTPUT", "STREAM", "STREAM_ONLY_STDOUT", "STREAM_ONLY_STDERR").
-    - Defaults to "COMBINED_OUTPUT" if not set.
-    - The STREAM returnTypes will write the output to the body of the HTTP message.
-    - The COMBINED_OUTPUT will write the output to the "result" parameter.
+- command - a string with the command name
+- arg - a list of arguments for the backend command
+- opt - a map of string to string of options
 
-Returns:
+Returns
 
-- result - result from the backend command.
-    - Only set when using returnType "COMBINED_OUTPUT".
-- error	 - set if rclone exits with an error code.
-- returnType - one of ("COMBINED_OUTPUT", "STREAM", "STREAM_ONLY_STDOUT", "STREAM_ONLY_STDERR").
+- result - result from the backend command
+- error	 - set if rclone exits with an error code
+- returnType - one of ("COMBINED_OUTPUT", "STREAM", "STREAM_ONLY_STDOUT". "STREAM_ONLY_STDERR")
 
-Example:
+For example
 
     rclone rc core/command command=ls -a mydrive:/ -o max-depth=1
-    rclone rc core/command -a ls -a mydrive:/ -o max-depth=1
+	rclone rc core/command -a ls -a mydrive:/ -o max-depth=1
 
-Returns:
+Returns
 
 ```
 {
@@ -722,7 +531,7 @@ Returns:
 	"result": "<Raw command line output>"
 }
 
-OR
+OR 
 {
 	"error": true,
 	"result": "<Raw command line output>"
@@ -761,17 +570,17 @@ are explained in the go docs: https://golang.org/pkg/runtime/#MemStats
 
 The most interesting values for most people are:
 
-- HeapAlloc - this is the amount of memory rclone is actually using
-- HeapSys - this is the amount of memory rclone has obtained from the OS
-- Sys - this is the total amount of memory requested from the OS
-   - It is virtual memory so may include unused memory
+* HeapAlloc: This is the amount of memory rclone is actually using
+* HeapSys: This is the amount of memory rclone has obtained from the OS
+* Sys: this is the total amount of memory requested from the OS
+  * It is virtual memory so may include unused memory
 
 ### core/obscure: Obscures a string passed in. {#core-obscure}
 
 Pass a clear string and rclone will obscure it for the config file:
 - clear - string
 
-Returns:
+Returns
 - obscured - string
 
 ### core/pid: Return PID of current process {#core-pid}
@@ -781,7 +590,7 @@ Useful for stopping rclone process.
 
 ### core/quit: Terminates the app. {#core-quit}
 
-(Optional) Pass an exit code to be used for terminating the app:
+(optional) Pass an exit code to be used for terminating the app:
 - exitCode - int
 
 ### core/stats: Returns stats about current transfers. {#core-stats}
@@ -801,22 +610,18 @@ Returns the following values:
 
 ```
 {
-	"bytes": total transferred bytes since the start of the group,
-	"checks": number of files checked,
-	"deletes" : number of files deleted,
-	"elapsedTime": time in floating point seconds since rclone was started,
+	"speed": average speed in bytes/sec since start of the process,
+	"bytes": total transferred bytes since the start of the process,
 	"errors": number of errors,
-	"eta": estimated time in seconds until the group completes,
-	"fatalError": boolean whether there has been at least one fatal error,
-	"lastError": last error string,
-	"renames" : number of files renamed,
-	"retryError": boolean showing whether there has been at least one non-NoRetryError,
-	"speed": average speed in bytes per second since start of the group,
-	"totalBytes": total number of bytes in the group,
-	"totalChecks": total number of checks in the group,
-	"totalTransfers": total number of transfers in the group,
-	"transferTime" : total time spent on running jobs,
+	"fatalError": whether there has been at least one FatalError,
+	"retryError": whether there has been at least one non-NoRetryError,
+	"checks": number of checked files,
 	"transfers": number of transferred files,
+	"deletes" : number of deleted files,
+	"renames" : number of renamed files,
+	"transferTime" : total time spent on running jobs,
+	"elapsedTime": time in seconds since the start of the process,
+	"lastError": last occurred error,
 	"transferring": an array of currently active file transfers:
 		[
 			{
@@ -824,8 +629,8 @@ Returns the following values:
 				"eta": estimated time in seconds until file transfer completion
 				"name": name of the file,
 				"percentage": progress of the file transfer in percent,
-				"speed": average speed over the whole transfer in bytes per second,
-				"speedAvg": current speed in bytes per second as an exponentially weighted moving average,
+				"speed": average speed over the whole transfer in bytes/sec,
+				"speedAvg": current speed in bytes/sec as an exponentially weighted moving average,
 				"size": size of the file in bytes
 			}
 		],
@@ -838,7 +643,7 @@ The value for "eta" is null if an eta cannot be determined.
 
 ### core/stats-delete: Delete stats group. {#core-stats-delete}
 
-This deletes entire stats group.
+This deletes entire stats group
 
 Parameters
 
@@ -888,7 +693,7 @@ Returns the following values:
 
 ### core/version: Shows the current version of rclone and the go runtime. {#core-version}
 
-This shows the current version of go and the go runtime:
+This shows the current version of go and the go runtime
 
 - version - rclone version, e.g. "v1.53.0"
 - decomposed - version number as [major, minor, patch]
@@ -897,8 +702,6 @@ This shows the current version of go and the go runtime:
 - os - OS in use as according to Go
 - arch - cpu architecture in use according to Go
 - goVersion - version of Go runtime in use
-- linking - type of rclone executable (static or dynamic)
-- goTags - space separated build tags or "none"
 
 ### debug/set-block-profile-rate: Set runtime.SetBlockProfileRate for blocking profiling. {#debug-set-block-profile-rate}
 
@@ -913,25 +716,9 @@ After calling this you can use this to see the blocking profile:
 
     go tool pprof http://localhost:5572/debug/pprof/block
 
-Parameters:
+Parameters
 
 - rate - int
-
-### debug/set-gc-percent: Call runtime/debug.SetGCPercent for setting the garbage collection target percentage. {#debug-set-gc-percent}
-
-SetGCPercent sets the garbage collection target percentage: a collection is triggered
-when the ratio of freshly allocated data to live data remaining after the previous collection
-reaches this percentage. SetGCPercent returns the previous setting. The initial setting is the
-value of the GOGC environment variable at startup, or 100 if the variable is not set.
-
-This setting may be effectively reduced in order to maintain a memory limit.
-A negative percentage effectively disables garbage collection, unless the memory limit is reached.
-
-See https://pkg.go.dev/runtime/debug#SetMemoryLimit for more details.
-
-Parameters:
-
-- gc-percent - int
 
 ### debug/set-mutex-profile-fraction: Set runtime.SetMutexProfileFraction for mutex profiling. {#debug-set-mutex-profile-fraction}
 
@@ -946,81 +733,29 @@ Once this is set you can look use this to profile the mutex contention:
 
     go tool pprof http://localhost:5572/debug/pprof/mutex
 
-Parameters:
+Parameters
 
 - rate - int
 
-Results:
+Results
 
 - previousRate - int
 
-### debug/set-soft-memory-limit: Call runtime/debug.SetMemoryLimit for setting a soft memory limit for the runtime. {#debug-set-soft-memory-limit}
-
-SetMemoryLimit provides the runtime with a soft memory limit.
-
-The runtime undertakes several processes to try to respect this memory limit, including
-adjustments to the frequency of garbage collections and returning memory to the underlying
-system more aggressively. This limit will be respected even if GOGC=off (or, if SetGCPercent(-1) is executed).
-
-The input limit is provided as bytes, and includes all memory mapped, managed, and not
-released by the Go runtime. Notably, it does not account for space used by the Go binary
-and memory external to Go, such as memory managed by the underlying system on behalf of
-the process, or memory managed by non-Go code inside the same process.
-Examples of excluded memory sources include: OS kernel memory held on behalf of the process,
-memory allocated by C code, and memory mapped by syscall.Mmap (because it is not managed by the Go runtime).
-
-A zero limit or a limit that's lower than the amount of memory used by the Go runtime may cause
-the garbage collector to run nearly continuously. However, the application may still make progress.
-
-The memory limit is always respected by the Go runtime, so to effectively disable this behavior,
-set the limit very high. math.MaxInt64 is the canonical value for disabling the limit, but values
-much greater than the available memory on the underlying system work just as well.
-
-See https://go.dev/doc/gc-guide for a detailed guide explaining the soft memory limit in more detail,
-as well as a variety of common use-cases and scenarios.
-
-SetMemoryLimit returns the previously set memory limit. A negative input does not adjust the limit,
-and allows for retrieval of the currently set memory limit.
-
-Parameters:
-
-- mem-limit - int
-
-### fscache/clear: Clear the Fs cache. {#fscache-clear}
-
-This clears the fs cache. This is where remotes created from backends
-are cached for a short while to make repeated rc calls more efficient.
-
-If you change the parameters of a backend then you may want to call
-this to clear an existing remote out of the cache before re-creating
-it.
-
-**Authentication is required for this call.**
-
-### fscache/entries: Returns the number of entries in the fs cache. {#fscache-entries}
-
-This returns the number of entries in the fs cache.
-
-Returns
-- entries - number of items in the cache
-
-**Authentication is required for this call.**
-
 ### job/list: Lists the IDs of the running jobs {#job-list}
 
-Parameters: None.
+Parameters - None
 
-Results:
+Results
 
-- jobids - array of integer job ids.
+- jobids - array of integer job ids
 
 ### job/status: Reads the status of the job ID {#job-status}
 
-Parameters:
+Parameters
 
-- jobid - id of the job (integer).
+- jobid - id of the job (integer)
 
-Results:
+Results
 
 - finished - boolean
 - duration - time in seconds that the job ran for
@@ -1035,19 +770,13 @@ Results:
 
 ### job/stop: Stop the running job {#job-stop}
 
-Parameters:
+Parameters
 
-- jobid - id of the job (integer).
-
-### job/stopgroup: Stop all running jobs in a group {#job-stopgroup}
-
-Parameters:
-
-- group - name of the group (string).
+- jobid - id of the job (integer)
 
 ### mount/listmounts: Show current mount points {#mount-listmounts}
 
-This shows currently mounted points, which can be used for performing an unmount.
+This shows currently mounted points, which can be used for performing an unmount
 
 This takes no parameters and returns
 
@@ -1066,22 +795,22 @@ Rclone's cloud storage systems as a file system with FUSE.
 
 If no mountType is provided, the priority is given as follows: 1. mount 2.cmount 3.mount2
 
-This takes the following parameters:
+This takes the following parameters
 
 - fs - a remote path to be mounted (required)
 - mountPoint: valid path on the local machine (required)
-- mountType: one of the values (mount, cmount, mount2) specifies the mount implementation to use
+- mountType: One of the values (mount, cmount, mount2) specifies the mount implementation to use
 - mountOpt: a JSON object with Mount options in.
 - vfsOpt: a JSON object with VFS options in.
 
-Example:
+Eg
 
     rclone rc mount/mount fs=mydrive: mountPoint=/home/<user>/mountPoint
     rclone rc mount/mount fs=mydrive: mountPoint=/home/<user>/mountPoint mountType=mount
     rclone rc mount/mount fs=TestDrive: mountPoint=/mnt/tmp vfsOpt='{"CacheMode": 2}' mountOpt='{"AllowOther": true}'
 
 The vfsOpt are as described in options/get and can be seen in the the
-"vfs" section when running and the mountOpt can be seen in the "mount" section:
+"vfs" section when running and the mountOpt can be seen in the "mount" section.
 
     rclone rc options/get
 
@@ -1110,21 +839,19 @@ rclone allows Linux, FreeBSD, macOS and Windows to
 mount any of Rclone's cloud storage systems as a file system with
 FUSE.
 
-This takes the following parameters:
+This takes the following parameters
 
 - mountPoint: valid path on the local machine where the mount was created (required)
 
-Example:
+Eg
 
     rclone rc mount/unmount mountPoint=/home/<user>/mountPoint
 
 **Authentication is required for this call.**
 
-### mount/unmountall: Unmount all active mounts {#mount-unmountall}
+### mount/unmountall: Show current mount points {#mount-unmountall}
 
-rclone allows Linux, FreeBSD, macOS and Windows to
-mount any of Rclone's cloud storage systems as a file system with
-FUSE.
+This shows currently mounted points, which can be used for performing an unmount
 
 This takes no parameters and returns error if unmount does not succeed.
 
@@ -1136,29 +863,29 @@ Eg
 
 ### operations/about: Return the space used on the remote {#operations-about}
 
-This takes the following parameters:
+This takes the following parameters
 
 - fs - a remote name string e.g. "drive:"
 
 The result is as returned from rclone about --json
 
-See the [about](/commands/rclone_about/) command for more information on the above.
+See the [about command](/commands/rclone_size/) command for more information on the above.
 
 **Authentication is required for this call.**
 
 ### operations/cleanup: Remove trashed files in the remote or path {#operations-cleanup}
 
-This takes the following parameters:
+This takes the following parameters
 
 - fs - a remote name string e.g. "drive:"
 
-See the [cleanup](/commands/rclone_cleanup/) command for more information on the above.
+See the [cleanup command](/commands/rclone_cleanup/) command for more information on the above.
 
 **Authentication is required for this call.**
 
 ### operations/copyfile: Copy a file from source remote to destination remote {#operations-copyfile}
 
-This takes the following parameters:
+This takes the following parameters
 
 - srcFs - a remote name string e.g. "drive:" for the source
 - srcRemote - a path within that remote e.g. "file.txt" for the source
@@ -1169,41 +896,40 @@ This takes the following parameters:
 
 ### operations/copyurl: Copy the URL to the object {#operations-copyurl}
 
-This takes the following parameters:
+This takes the following parameters
 
 - fs - a remote name string e.g. "drive:"
 - remote - a path within that remote e.g. "dir"
 - url - string, URL to read from
  - autoFilename - boolean, set to true to retrieve destination file name from url
-
-See the [copyurl](/commands/rclone_copyurl/) command for more information on the above.
+See the [copyurl command](/commands/rclone_copyurl/) command for more information on the above.
 
 **Authentication is required for this call.**
 
 ### operations/delete: Remove files in the path {#operations-delete}
 
-This takes the following parameters:
+This takes the following parameters
 
 - fs - a remote name string e.g. "drive:"
 
-See the [delete](/commands/rclone_delete/) command for more information on the above.
+See the [delete command](/commands/rclone_delete/) command for more information on the above.
 
 **Authentication is required for this call.**
 
 ### operations/deletefile: Remove the single file pointed to {#operations-deletefile}
 
-This takes the following parameters:
+This takes the following parameters
 
 - fs - a remote name string e.g. "drive:"
 - remote - a path within that remote e.g. "dir"
 
-See the [deletefile](/commands/rclone_deletefile/) command for more information on the above.
+See the [deletefile command](/commands/rclone_deletefile/) command for more information on the above.
 
 **Authentication is required for this call.**
 
 ### operations/fsinfo: Return information about the remote {#operations-fsinfo}
 
-This takes the following parameters:
+This takes the following parameters
 
 - fs - a remote name string e.g. "drive:"
 
@@ -1211,103 +937,46 @@ This returns info about the remote passed in;
 
 ```
 {
-        // optional features and whether they are available or not
-        "Features": {
-                "About": true,
-                "BucketBased": false,
-                "BucketBasedRootOK": false,
-                "CanHaveEmptyDirectories": true,
-                "CaseInsensitive": false,
-                "ChangeNotify": false,
-                "CleanUp": false,
-                "Command": true,
-                "Copy": false,
-                "DirCacheFlush": false,
-                "DirMove": true,
-                "Disconnect": false,
-                "DuplicateFiles": false,
-                "GetTier": false,
-                "IsLocal": true,
-                "ListR": false,
-                "MergeDirs": false,
-                "MetadataInfo": true,
-                "Move": true,
-                "OpenWriterAt": true,
-                "PublicLink": false,
-                "Purge": true,
-                "PutStream": true,
-                "PutUnchecked": false,
-                "ReadMetadata": true,
-                "ReadMimeType": false,
-                "ServerSideAcrossConfigs": false,
-                "SetTier": false,
-                "SetWrapper": false,
-                "Shutdown": false,
-                "SlowHash": true,
-                "SlowModTime": false,
-                "UnWrap": false,
-                "UserInfo": false,
-                "UserMetadata": true,
-                "WrapFs": false,
-                "WriteMetadata": true,
-                "WriteMimeType": false
-        },
-        // Names of hashes available
-        "Hashes": [
-                "md5",
-                "sha1",
-                "whirlpool",
-                "crc32",
-                "sha256",
-                "dropbox",
-                "mailru",
-                "quickxor"
-        ],
-        "Name": "local",        // Name as created
-        "Precision": 1,         // Precision of timestamps in ns
-        "Root": "/",            // Path as created
-        "String": "Local file system at /", // how the remote will appear in logs
-        // Information about the system metadata for this backend
-        "MetadataInfo": {
-                "System": {
-                        "atime": {
-                                "Help": "Time of last access",
-                                "Type": "RFC 3339",
-                                "Example": "2006-01-02T15:04:05.999999999Z07:00"
-                        },
-                        "btime": {
-                                "Help": "Time of file birth (creation)",
-                                "Type": "RFC 3339",
-                                "Example": "2006-01-02T15:04:05.999999999Z07:00"
-                        },
-                        "gid": {
-                                "Help": "Group ID of owner",
-                                "Type": "decimal number",
-                                "Example": "500"
-                        },
-                        "mode": {
-                                "Help": "File type and mode",
-                                "Type": "octal, unix style",
-                                "Example": "0100664"
-                        },
-                        "mtime": {
-                                "Help": "Time of last modification",
-                                "Type": "RFC 3339",
-                                "Example": "2006-01-02T15:04:05.999999999Z07:00"
-                        },
-                        "rdev": {
-                                "Help": "Device ID (if special file)",
-                                "Type": "hexadecimal",
-                                "Example": "1abc"
-                        },
-                        "uid": {
-                                "Help": "User ID of owner",
-                                "Type": "decimal number",
-                                "Example": "500"
-                        }
-                },
-                "Help": "Textual help string\n"
-        }
+	// optional features and whether they are available or not
+	"Features": {
+		"About": true,
+		"BucketBased": false,
+		"CanHaveEmptyDirectories": true,
+		"CaseInsensitive": false,
+		"ChangeNotify": false,
+		"CleanUp": false,
+		"Copy": false,
+		"DirCacheFlush": false,
+		"DirMove": true,
+		"DuplicateFiles": false,
+		"GetTier": false,
+		"ListR": false,
+		"MergeDirs": false,
+		"Move": true,
+		"OpenWriterAt": true,
+		"PublicLink": false,
+		"Purge": true,
+		"PutStream": true,
+		"PutUnchecked": false,
+		"ReadMimeType": false,
+		"ServerSideAcrossConfigs": false,
+		"SetTier": false,
+		"SetWrapper": false,
+		"UnWrap": false,
+		"WrapFs": false,
+		"WriteMimeType": false
+	},
+	// Names of hashes available
+	"Hashes": [
+		"MD5",
+		"SHA-1",
+		"DropboxHash",
+		"QuickXorHash"
+	],
+	"Name": "local",	// Name as created
+	"Precision": 1,		// Precision of timestamps in ns
+	"Root": "/",		// Path as created
+	"String": "Local file system at /" // how the remote will appear in logs
 }
 ```
 
@@ -1317,7 +986,7 @@ This command does not have a command line equivalent so use this instead:
 
 ### operations/list: List the given remote and path in JSON format {#operations-list}
 
-This takes the following parameters:
+This takes the following parameters
 
 - fs - a remote name string e.g. "drive:"
 - remote - a path within that remote e.g. "dir"
@@ -1327,35 +996,30 @@ This takes the following parameters:
     - showEncrypted -  If set show decrypted names
     - showOrigIDs - If set show the IDs for each item if known
     - showHash - If set return a dictionary of hashes
-    - noMimeType - If set don't show mime types
-    - dirsOnly - If set only show directories
-    - filesOnly - If set only show files
-    - metadata - If set return metadata of objects also
-    - hashTypes - array of strings of hash types to show if showHash set
 
-Returns:
+The result is
 
 - list
     - This is an array of objects as described in the lsjson command
 
-See the [lsjson](/commands/rclone_lsjson/) command for more information on the above and examples.
+See the [lsjson command](/commands/rclone_lsjson/) for more information on the above and examples.
 
 **Authentication is required for this call.**
 
 ### operations/mkdir: Make a destination directory or container {#operations-mkdir}
 
-This takes the following parameters:
+This takes the following parameters
 
 - fs - a remote name string e.g. "drive:"
 - remote - a path within that remote e.g. "dir"
 
-See the [mkdir](/commands/rclone_mkdir/) command for more information on the above.
+See the [mkdir command](/commands/rclone_mkdir/) command for more information on the above.
 
 **Authentication is required for this call.**
 
 ### operations/movefile: Move a file from source remote to destination remote {#operations-movefile}
 
-This takes the following parameters:
+This takes the following parameters
 
 - srcFs - a remote name string e.g. "drive:" for the source
 - srcRemote - a path within that remote e.g. "file.txt" for the source
@@ -1366,136 +1030,97 @@ This takes the following parameters:
 
 ### operations/publiclink: Create or retrieve a public link to the given file or folder. {#operations-publiclink}
 
-This takes the following parameters:
+This takes the following parameters
 
 - fs - a remote name string e.g. "drive:"
 - remote - a path within that remote e.g. "dir"
 - unlink - boolean - if set removes the link rather than adding it (optional)
 - expire - string - the expiry time of the link e.g. "1d" (optional)
 
-Returns:
+Returns
 
 - url - URL of the resource
 
-See the [link](/commands/rclone_link/) command for more information on the above.
+See the [link command](/commands/rclone_link/) command for more information on the above.
 
 **Authentication is required for this call.**
 
 ### operations/purge: Remove a directory or container and all of its contents {#operations-purge}
 
-This takes the following parameters:
+This takes the following parameters
 
 - fs - a remote name string e.g. "drive:"
 - remote - a path within that remote e.g. "dir"
 
-See the [purge](/commands/rclone_purge/) command for more information on the above.
+See the [purge command](/commands/rclone_purge/) command for more information on the above.
 
 **Authentication is required for this call.**
 
 ### operations/rmdir: Remove an empty directory or container {#operations-rmdir}
 
-This takes the following parameters:
+This takes the following parameters
 
 - fs - a remote name string e.g. "drive:"
 - remote - a path within that remote e.g. "dir"
 
-See the [rmdir](/commands/rclone_rmdir/) command for more information on the above.
+See the [rmdir command](/commands/rclone_rmdir/) command for more information on the above.
 
 **Authentication is required for this call.**
 
 ### operations/rmdirs: Remove all the empty directories in the path {#operations-rmdirs}
 
-This takes the following parameters:
+This takes the following parameters
 
 - fs - a remote name string e.g. "drive:"
 - remote - a path within that remote e.g. "dir"
 - leaveRoot - boolean, set to true not to delete the root
 
-See the [rmdirs](/commands/rclone_rmdirs/) command for more information on the above.
+See the [rmdirs command](/commands/rclone_rmdirs/) command for more information on the above.
 
 **Authentication is required for this call.**
 
 ### operations/size: Count the number of bytes and files in remote {#operations-size}
 
-This takes the following parameters:
+This takes the following parameters
 
 - fs - a remote name string e.g. "drive:path/to/dir"
 
-Returns:
+Returns
 
 - count - number of files
 - bytes - number of bytes in those files
 
-See the [size](/commands/rclone_size/) command for more information on the above.
-
-**Authentication is required for this call.**
-
-### operations/stat: Give information about the supplied file or directory {#operations-stat}
-
-This takes the following parameters
-
-- fs - a remote name string eg "drive:"
-- remote - a path within that remote eg "dir"
-- opt - a dictionary of options to control the listing (optional)
-    - see operations/list for the options
-
-The result is
-
-- item - an object as described in the lsjson command. Will be null if not found.
-
-Note that if you are only interested in files then it is much more
-efficient to set the filesOnly flag in the options.
-
-See the [lsjson](/commands/rclone_lsjson/) command for more information on the above and examples.
+See the [size command](/commands/rclone_size/) command for more information on the above.
 
 **Authentication is required for this call.**
 
 ### operations/uploadfile: Upload file using multiform/form-data {#operations-uploadfile}
 
-This takes the following parameters:
+This takes the following parameters
 
 - fs - a remote name string e.g. "drive:"
 - remote - a path within that remote e.g. "dir"
 - each part in body represents a file to be uploaded
+See the [uploadfile command](/commands/rclone_uploadfile/) command for more information on the above.
 
 **Authentication is required for this call.**
 
 ### options/blocks: List all the option blocks {#options-blocks}
 
-Returns:
+Returns
 - options - a list of the options block names
 
-### options/get: Get all the global options {#options-get}
+### options/get: Get all the options {#options-get}
 
 Returns an object where keys are option block names and values are an
 object with the current option values in.
-
-Note that these are the global options which are unaffected by use of
-the _config and _filter parameters. If you wish to read the parameters
-set in _config then use options/config and for _filter use options/filter.
-
-This shows the internal names of the option within rclone which should
-map to the external options very easily with a few exceptions.
-
-### options/local: Get the currently active config for this call {#options-local}
-
-Returns an object with the keys "config" and "filter".
-The "config" key contains the local config and the "filter" key contains
-the local filters.
-
-Note that these are the local options specific to this rc call. If
-_config was not supplied then they will be the global options.
-Likewise with "_filter".
-
-This call is mostly useful for seeing if _config and _filter passing
-is working.
 
 This shows the internal names of the option within rclone which should
 map to the external options very easily with a few exceptions.
 
 ### options/set: Set an option {#options-set}
 
-Parameters:
+Parameters
 
 - option block name containing an object with
   - key: value
@@ -1508,28 +1133,27 @@ changed like this.
 
 For example:
 
-This sets DEBUG level logs (-vv) (these can be set by number or string)
+This sets DEBUG level logs (-vv)
 
-    rclone rc options/set --json '{"main": {"LogLevel": "DEBUG"}}'
     rclone rc options/set --json '{"main": {"LogLevel": 8}}'
 
 And this sets INFO level logs (-v)
 
-    rclone rc options/set --json '{"main": {"LogLevel": "INFO"}}'
+    rclone rc options/set --json '{"main": {"LogLevel": 7}}'
 
 And this sets NOTICE level logs (normal without -v)
 
-    rclone rc options/set --json '{"main": {"LogLevel": "NOTICE"}}'
+    rclone rc options/set --json '{"main": {"LogLevel": 6}}'
 
 ### pluginsctl/addPlugin: Add a plugin using url {#pluginsctl-addPlugin}
 
-Used for adding a plugin to the webgui.
+used for adding a plugin to the webgui
 
-This takes the following parameters:
+This takes the following parameters
 
-- url - http url of the github repo where the plugin is hosted (http://github.com/rclone/rclone-webui-react).
+- url: http url of the github repo where the plugin is hosted (http://github.com/rclone/rclone-webui-react)
 
-Example:
+Eg
 
    rclone rc pluginsctl/addPlugin
 
@@ -1537,19 +1161,19 @@ Example:
 
 ### pluginsctl/getPluginsForType: Get plugins with type criteria {#pluginsctl-getPluginsForType}
 
-This shows all possible plugins by a mime type.
+This shows all possible plugins by a mime type
 
-This takes the following parameters:
+This takes the following parameters
 
-- type - supported mime type by a loaded plugin e.g. (video/mp4, audio/mp3).
-- pluginType - filter plugins based on their type e.g. (DASHBOARD, FILE_HANDLER, TERMINAL).
+- type: supported mime type by a loaded plugin e.g. (video/mp4, audio/mp3)
+- pluginType: filter plugins based on their type e.g. (DASHBOARD, FILE_HANDLER, TERMINAL) 
 
-Returns:
+and returns
 
-- loadedPlugins - list of current production plugins.
-- testPlugins - list of temporarily loaded development plugins, usually running on a different server.
+- loadedPlugins: list of current production plugins
+- testPlugins: list of temporarily loaded development plugins, usually running on a different server.
 
-Example:
+Eg
 
    rclone rc pluginsctl/getPluginsForType type=video/mp4
 
@@ -1559,12 +1183,12 @@ Example:
 
 This allows you to get the currently enabled plugins and their details.
 
-This takes no parameters and returns:
+This takes no parameters and returns
 
-- loadedPlugins - list of current production plugins.
-- testPlugins - list of temporarily loaded development plugins, usually running on a different server.
+- loadedPlugins: list of current production plugins
+- testPlugins: list of temporarily loaded development plugins, usually running on a different server.
 
-E.g.
+Eg
 
    rclone rc pluginsctl/listPlugins
 
@@ -1572,13 +1196,13 @@ E.g.
 
 ### pluginsctl/listTestPlugins: Show currently loaded test plugins {#pluginsctl-listTestPlugins}
 
-Allows listing of test plugins with the rclone.test set to true in package.json of the plugin.
+allows listing of test plugins with the rclone.test set to true in package.json of the plugin
 
-This takes no parameters and returns:
+This takes no parameters and returns
 
-- loadedTestPlugins - list of currently available test plugins.
+- loadedTestPlugins: list of currently available test plugins
 
-E.g.
+Eg
 
     rclone rc pluginsctl/listTestPlugins
 
@@ -1586,13 +1210,13 @@ E.g.
 
 ### pluginsctl/removePlugin: Remove a loaded plugin {#pluginsctl-removePlugin}
 
-This allows you to remove a plugin using it's name.
+This allows you to remove a plugin using it's name
 
-This takes parameters:
+This takes parameters
 
-- name - name of the plugin in the format `author`/`plugin_name`.
+- name: name of the plugin in the format `author`/`plugin_name`
 
-E.g.
+Eg
 
    rclone rc pluginsctl/removePlugin name=rclone/video-plugin
 
@@ -1600,13 +1224,13 @@ E.g.
 
 ### pluginsctl/removeTestPlugin: Remove  a test plugin {#pluginsctl-removeTestPlugin}
 
-This allows you to remove a plugin using it's name.
+This allows you to remove a plugin using it's name
 
-This takes the following parameters:
+This takes the following parameters
 
-- name - name of the plugin in the format `author`/`plugin_name`.
+- name: name of the plugin in the format `author`/`plugin_name`
 
-Example:
+Eg
 
     rclone rc pluginsctl/removeTestPlugin name=rclone/rclone-webui-react
 
@@ -1636,69 +1260,40 @@ check that parameter passing is working properly.
 
 **Authentication is required for this call.**
 
-### sync/bisync: Perform bidirectional synchronization between two paths. {#sync-bisync}
+### sync/copy: copy a directory from source remote to destination remote {#sync-copy}
 
 This takes the following parameters
 
-- path1 - a remote directory string e.g. `drive:path1`
-- path2 - a remote directory string e.g. `drive:path2`
-- dryRun - dry-run mode
-- resync - performs the resync run
-- checkAccess - abort if RCLONE_TEST files are not found on both filesystems
-- checkFilename - file name for checkAccess (default: RCLONE_TEST)
-- maxDelete - abort sync if percentage of deleted files is above
-  this threshold (default: 50)
-- force - maxDelete safety check and run the sync
-- checkSync - `true` by default, `false` disables comparison of final listings,
-              `only` will skip sync, only compare listings from the last run
-- removeEmptyDirs - remove empty directories at the final cleanup step
-- filtersFile - read filtering patterns from a file
-- workdir - server directory for history files (default: /home/ncw/.cache/rclone/bisync)
-- noCleanup - retain working files
-
-See [bisync command help](https://rclone.org/commands/rclone_bisync/)
-and [full bisync description](https://rclone.org/bisync/)
-for more information.
-
-**Authentication is required for this call.**
-
-### sync/copy: copy a directory from source remote to destination remote {#sync-copy}
-
-This takes the following parameters:
-
 - srcFs - a remote name string e.g. "drive:src" for the source
 - dstFs - a remote name string e.g. "drive:dst" for the destination
-- createEmptySrcDirs - create empty src directories on destination if set
 
 
-See the [copy](/commands/rclone_copy/) command for more information on the above.
+See the [copy command](/commands/rclone_copy/) command for more information on the above.
 
 **Authentication is required for this call.**
 
 ### sync/move: move a directory from source remote to destination remote {#sync-move}
 
-This takes the following parameters:
+This takes the following parameters
 
 - srcFs - a remote name string e.g. "drive:src" for the source
 - dstFs - a remote name string e.g. "drive:dst" for the destination
-- createEmptySrcDirs - create empty src directories on destination if set
 - deleteEmptySrcDirs - delete empty src directories if set
 
 
-See the [move](/commands/rclone_move/) command for more information on the above.
+See the [move command](/commands/rclone_move/) command for more information on the above.
 
 **Authentication is required for this call.**
 
 ### sync/sync: sync a directory from source remote to destination remote {#sync-sync}
 
-This takes the following parameters:
+This takes the following parameters
 
 - srcFs - a remote name string e.g. "drive:src" for the source
 - dstFs - a remote name string e.g. "drive:dst" for the destination
-- createEmptySrcDirs - create empty src directories on destination if set
 
 
-See the [sync](/commands/rclone_sync/) command for more information on the above.
+See the [sync command](/commands/rclone_sync/) command for more information on the above.
 
 **Authentication is required for this call.**
 
@@ -1780,47 +1375,9 @@ supplied and if there is only one VFS in use then that VFS will be
 used. If there is more than one VFS in use then the "fs" parameter
 must be supplied.
 
-### vfs/stats: Stats for a VFS. {#vfs-stats}
-
-This returns stats for the selected VFS.
-
-    {
-        // Status of the disk cache - only present if --vfs-cache-mode > off
-        "diskCache": {
-            "bytesUsed": 0,
-            "erroredFiles": 0,
-            "files": 0,
-            "hashType": 1,
-            "outOfSpace": false,
-            "path": "/home/user/.cache/rclone/vfs/local/mnt/a",
-            "pathMeta": "/home/user/.cache/rclone/vfsMeta/local/mnt/a",
-            "uploadsInProgress": 0,
-            "uploadsQueued": 0
-        },
-        "fs": "/mnt/a",
-        "inUse": 1,
-        // Status of the in memory metadata cache
-        "metadataCache": {
-            "dirs": 1,
-            "files": 0
-        },
-        // Options as returned by options/get
-        "opt": {
-            "CacheMaxAge": 3600000000000,
-            // ...
-            "WriteWait": 1000000000
-        }
-    }
-
- 
-This command takes an "fs" parameter. If this parameter is not
-supplied and if there is only one VFS in use then that VFS will be
-used. If there is more than one VFS in use then the "fs" parameter
-must be supplied.
-
 {{< rem autogenerated stop >}}
 
-## Accessing the remote control via HTTP {#api-http}
+## Accessing the remote control via HTTP
 
 Rclone implements a simple HTTP based protocol.
 
@@ -1835,7 +1392,7 @@ parameters or by supplying "Content-Type: application/json" and a JSON
 blob in the body.  There are examples of these below using `curl`.
 
 The response will be a JSON blob in the body of the response.  This is
-formatted to be reasonably human-readable.
+formatted to be reasonably human readable.
 
 ### Error returns
 
@@ -2027,10 +1584,10 @@ Here is how to use some of them:
 - 30-second CPU profile: `go tool pprof http://localhost:5572/debug/pprof/profile`
 - 5-second execution trace: `wget http://localhost:5572/debug/pprof/trace?seconds=5`
 - Goroutine blocking profile
-    - Enable first with: `rclone rc debug/set-block-profile-rate rate=1` ([docs](#debug-set-block-profile-rate))
+    - Enable first with: `rclone rc debug/set-block-profile-rate rate=1` ([docs](#debug/set-block-profile-rate))
     - `go tool pprof http://localhost:5572/debug/pprof/block`
 - Contended mutexes:
-    - Enable first with: `rclone rc debug/set-mutex-profile-fraction rate=1` ([docs](#debug-set-mutex-profile-fraction))
+    - Enable first with: `rclone rc debug/set-mutex-profile-fraction rate=1` ([docs](#debug/set-mutex-profile-fraction))
     - `go tool pprof http://localhost:5572/debug/pprof/mutex`
 
 See the [net/http/pprof docs](https://golang.org/pkg/net/http/pprof/)

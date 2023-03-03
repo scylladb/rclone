@@ -1,11 +1,10 @@
 package swift
 
 import (
-	"context"
 	"net/http"
 	"time"
 
-	"github.com/ncw/swift/v2"
+	"github.com/ncw/swift"
 )
 
 // auth is an authenticator for swift.  It overrides the StorageUrl
@@ -29,19 +28,19 @@ func newAuth(parentAuth swift.Authenticator, storageURL string, authToken string
 }
 
 // Request creates an http.Request for the auth - return nil if not needed
-func (a *auth) Request(ctx context.Context, c *swift.Connection) (*http.Request, error) {
+func (a *auth) Request(c *swift.Connection) (*http.Request, error) {
 	if a.parentAuth == nil {
 		return nil, nil
 	}
-	return a.parentAuth.Request(ctx, c)
+	return a.parentAuth.Request(c)
 }
 
 // Response parses the http.Response
-func (a *auth) Response(ctx context.Context, resp *http.Response) error {
+func (a *auth) Response(resp *http.Response) error {
 	if a.parentAuth == nil {
 		return nil
 	}
-	return a.parentAuth.Response(ctx, resp)
+	return a.parentAuth.Response(resp)
 }
 
 // The public storage URL - set Internal to true to read

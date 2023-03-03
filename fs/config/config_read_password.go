@@ -1,8 +1,8 @@
-// ReadPassword for OSes which are supported by golang.org/x/term
+// ReadPassword for OSes which are supported by golang.org/x/crypto/ssh/terminal
 // See https://github.com/golang/go/issues/14441 - plan9
+//     https://github.com/golang/go/issues/13085 - solaris
 
-//go:build !plan9
-// +build !plan9
+// +build !solaris,!plan9
 
 package config
 

@@ -6,19 +6,19 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httputil"
-	"os"
 	"sync"
 	"time"
 
 	"github.com/rclone/rclone/fs"
-	"github.com/rclone/rclone/fs/accounting"
 	"github.com/rclone/rclone/lib/structs"
 	"golang.org/x/net/publicsuffix"
+	"golang.org/x/time/rate"
 )
 
 const (
@@ -29,9 +29,79 @@ const (
 var (
 	transport    http.RoundTripper
 	noTransport  = new(sync.Once)
+	tpsBucket    *rate.Limiter // for limiting number of http transactions per second
 	cookieJar, _ = cookiejar.New(&cookiejar.Options{PublicSuffixList: publicsuffix.List})
-	logMutex     sync.Mutex
 )
+
+// StartHTTPTokenBucket starts the token bucket if necessary
+func StartHTTPTokenBucket(ctx context.Context) {
+	ci := fs.GetConfig(ctx)
+	if ci.TPSLimit > 0 {
+		tpsBurst := ci.TPSLimitBurst
+		if tpsBurst < 1 {
+			tpsBurst = 1
+		}
+		tpsBucket = rate.NewLimiter(rate.Limit(ci.TPSLimit), tpsBurst)
+		fs.Infof(nil, "Starting HTTP transaction limiter: max %g transactions/s with burst %d", ci.TPSLimit, tpsBurst)
+	}
+}
+
+// A net.Conn that sets a deadline for every Read or Write operation
+type timeoutConn struct {
+	net.Conn
+	timeout time.Duration
+}
+
+// create a timeoutConn using the timeout
+func newTimeoutConn(conn net.Conn, timeout time.Duration) (c *timeoutConn, err error) {
+	c = &timeoutConn{
+		Conn:    conn,
+		timeout: timeout,
+	}
+	err = c.nudgeDeadline()
+	return
+}
+
+// Nudge the deadline for an idle timeout on by c.timeout if non-zero
+func (c *timeoutConn) nudgeDeadline() (err error) {
+	if c.timeout == 0 {
+		return nil
+	}
+	when := time.Now().Add(c.timeout)
+	return c.Conn.SetDeadline(when)
+}
+
+// readOrWrite bytes doing idle timeouts
+func (c *timeoutConn) readOrWrite(f func([]byte) (int, error), b []byte) (n int, err error) {
+	n, err = f(b)
+	// Don't nudge if no bytes or an error
+	if n == 0 || err != nil {
+		return
+	}
+	// Nudge the deadline on successful Read or Write
+	err = c.nudgeDeadline()
+	return
+}
+
+// Read bytes doing idle timeouts
+func (c *timeoutConn) Read(b []byte) (n int, err error) {
+	return c.readOrWrite(c.Conn.Read, b)
+}
+
+// Write bytes doing idle timeouts
+func (c *timeoutConn) Write(b []byte) (n int, err error) {
+	return c.readOrWrite(c.Conn.Write, b)
+}
+
+// dial with context and timeouts
+func dialContextTimeout(ctx context.Context, network, address string, ci *fs.ConfigInfo) (net.Conn, error) {
+	dialer := NewDialer(ctx)
+	c, err := dialer.DialContext(ctx, network, address)
+	if err != nil {
+		return c, err
+	}
+	return newTimeoutConn(c, ci.Timeout)
+}
 
 // ResetTransport resets the existing transport, allowing it to take new settings.
 // Should only be used for testing.
@@ -53,7 +123,6 @@ func NewTransportCustom(ctx context.Context, customize func(*http.Transport)) ht
 	t.MaxIdleConns = 2 * t.MaxIdleConnsPerHost
 	t.TLSHandshakeTimeout = ci.ConnectTimeout
 	t.ResponseHeaderTimeout = ci.Timeout
-	t.DisableKeepAlives = ci.DisableHTTPKeepAlives
 
 	// TLS Config
 	t.TLSClientConfig = &tls.Config{
@@ -70,29 +139,26 @@ func NewTransportCustom(ctx context.Context, customize func(*http.Transport)) ht
 			log.Fatalf("Failed to load --client-cert/--client-key pair: %v", err)
 		}
 		t.TLSClientConfig.Certificates = []tls.Certificate{cert}
+		t.TLSClientConfig.BuildNameToCertificate()
 	}
 
-	// Load CA certs
-	if len(ci.CaCert) != 0 {
-
+	// Load CA cert
+	if ci.CaCert != "" {
+		caCert, err := ioutil.ReadFile(ci.CaCert)
+		if err != nil {
+			log.Fatalf("Failed to read --ca-cert: %v", err)
+		}
 		caCertPool := x509.NewCertPool()
-
-		for _, cert := range ci.CaCert {
-			caCert, err := os.ReadFile(cert)
-			if err != nil {
-				log.Fatalf("Failed to read --ca-cert file %q : %v", cert, err)
-			}
-			ok := caCertPool.AppendCertsFromPEM(caCert)
-			if !ok {
-				log.Fatalf("Failed to add certificates from --ca-cert file %q", cert)
-			}
+		ok := caCertPool.AppendCertsFromPEM(caCert)
+		if !ok {
+			log.Fatalf("Failed to add certificates from --ca-cert")
 		}
 		t.TLSClientConfig.RootCAs = caCertPool
 	}
 
 	t.DisableCompression = ci.NoGzip
 	t.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-		return dialContext(ctx, network, addr, ci)
+		return dialContextTimeout(ctx, network, addr, ci)
 	}
 	t.IdleConnTimeout = 60 * time.Second
 	t.ExpectContinueTimeout = ci.ExpectContinueTimeout
@@ -102,10 +168,6 @@ func NewTransportCustom(ctx context.Context, customize func(*http.Transport)) ht
 			"Accept-Encoding as shown may not be correct in the request and the response may not show "+
 			"Content-Encoding if the go standard libraries auto gzip encoding was in effect. In this case"+
 			" the body of the request will be gunzipped before showing it.")
-	}
-
-	if ci.DisableHTTP2 {
-		t.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
 	}
 
 	// customize the transport if required
@@ -140,14 +202,12 @@ func NewClient(ctx context.Context) *http.Client {
 // Transport is our http Transport which wraps an http.Transport
 // * Sets the User Agent
 // * Does logging
-// * Updates metrics
 type Transport struct {
 	*http.Transport
 	dump          fs.DumpFlags
 	filterRequest func(req *http.Request)
 	userAgent     string
 	headers       []*fs.HTTPOption
-	metrics       *Metrics
 }
 
 // newTransport wraps the http.Transport passed in and logs all
@@ -158,7 +218,6 @@ func newTransport(ci *fs.ConfigInfo, transport *http.Transport) *Transport {
 		dump:      ci.Dump,
 		userAgent: ci.UserAgent,
 		headers:   ci.Headers,
-		metrics:   DefaultMetrics,
 	}
 }
 
@@ -249,8 +308,13 @@ func cleanAuths(buf []byte) []byte {
 
 // RoundTrip implements the RoundTripper interface.
 func (t *Transport) RoundTrip(req *http.Request) (resp *http.Response, err error) {
-	// Limit transactions per second if required
-	accounting.LimitTPS(req.Context())
+	// Get transactions per second token first if limiting
+	if tpsBucket != nil {
+		tbErr := tpsBucket.Wait(req.Context())
+		if tbErr != nil && tbErr != context.Canceled {
+			fs.Errorf(nil, "HTTP token bucket error: %v", tbErr)
+		}
+	}
 	// Force user agent
 	req.Header.Set("User-Agent", t.userAgent)
 	// Set user defined headers
@@ -267,18 +331,15 @@ func (t *Transport) RoundTrip(req *http.Request) (resp *http.Response, err error
 		if t.dump&fs.DumpAuth == 0 {
 			buf = cleanAuths(buf)
 		}
-		logMutex.Lock()
 		fs.Debugf(nil, "%s", separatorReq)
 		fs.Debugf(nil, "%s (req %p)", "HTTP REQUEST", req)
 		fs.Debugf(nil, "%s", string(buf))
 		fs.Debugf(nil, "%s", separatorReq)
-		logMutex.Unlock()
 	}
 	// Do round trip
 	resp, err = t.Transport.RoundTrip(req)
 	// Logf response
 	if t.dump&(fs.DumpHeaders|fs.DumpBodies|fs.DumpAuth|fs.DumpRequests|fs.DumpResponses) != 0 {
-		logMutex.Lock()
 		fs.Debugf(nil, "%s", separatorResp)
 		fs.Debugf(nil, "%s (req %p)", "HTTP RESPONSE", req)
 		if err != nil {
@@ -288,13 +349,23 @@ func (t *Transport) RoundTrip(req *http.Request) (resp *http.Response, err error
 			fs.Debugf(nil, "%s", string(buf))
 		}
 		fs.Debugf(nil, "%s", separatorResp)
-		logMutex.Unlock()
 	}
-	// Update metrics
-	t.metrics.onResponse(req, resp)
-
 	if err == nil {
 		checkServerTime(req, resp)
 	}
 	return resp, err
+}
+
+// NewDialer creates a net.Dialer structure with Timeout, Keepalive
+// and LocalAddr set from rclone flags.
+func NewDialer(ctx context.Context) *net.Dialer {
+	ci := fs.GetConfig(ctx)
+	dialer := &net.Dialer{
+		Timeout:   ci.ConnectTimeout,
+		KeepAlive: 30 * time.Second,
+	}
+	if ci.BindAddr != nil {
+		dialer.LocalAddr = &net.TCPAddr{IP: ci.BindAddr}
+	}
+	return dialer
 }

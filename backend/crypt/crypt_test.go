@@ -4,7 +4,6 @@ package crypt_test
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 
 	"github.com/rclone/rclone/backend/crypt"
@@ -30,7 +29,7 @@ func TestIntegration(t *testing.T) {
 }
 
 // TestStandard runs integration tests against the remote
-func TestStandardBase32(t *testing.T) {
+func TestStandard(t *testing.T) {
 	if *fstest.RemoteName != "" {
 		t.Skip("Skipping as -remote set")
 	}
@@ -47,51 +46,6 @@ func TestStandardBase32(t *testing.T) {
 		},
 		UnimplementableFsMethods:     []string{"OpenWriterAt"},
 		UnimplementableObjectMethods: []string{"MimeType"},
-		QuickTestOK:                  true,
-	})
-}
-
-func TestStandardBase64(t *testing.T) {
-	if *fstest.RemoteName != "" {
-		t.Skip("Skipping as -remote set")
-	}
-	tempdir := filepath.Join(os.TempDir(), "rclone-crypt-test-standard")
-	name := "TestCrypt"
-	fstests.Run(t, &fstests.Opt{
-		RemoteName: name + ":",
-		NilObject:  (*crypt.Object)(nil),
-		ExtraConfig: []fstests.ExtraConfigItem{
-			{Name: name, Key: "type", Value: "crypt"},
-			{Name: name, Key: "remote", Value: tempdir},
-			{Name: name, Key: "password", Value: obscure.MustObscure("potato")},
-			{Name: name, Key: "filename_encryption", Value: "standard"},
-			{Name: name, Key: "filename_encoding", Value: "base64"},
-		},
-		UnimplementableFsMethods:     []string{"OpenWriterAt"},
-		UnimplementableObjectMethods: []string{"MimeType"},
-		QuickTestOK:                  true,
-	})
-}
-
-func TestStandardBase32768(t *testing.T) {
-	if *fstest.RemoteName != "" {
-		t.Skip("Skipping as -remote set")
-	}
-	tempdir := filepath.Join(os.TempDir(), "rclone-crypt-test-standard")
-	name := "TestCrypt"
-	fstests.Run(t, &fstests.Opt{
-		RemoteName: name + ":",
-		NilObject:  (*crypt.Object)(nil),
-		ExtraConfig: []fstests.ExtraConfigItem{
-			{Name: name, Key: "type", Value: "crypt"},
-			{Name: name, Key: "remote", Value: tempdir},
-			{Name: name, Key: "password", Value: obscure.MustObscure("potato")},
-			{Name: name, Key: "filename_encryption", Value: "standard"},
-			{Name: name, Key: "filename_encoding", Value: "base32768"},
-		},
-		UnimplementableFsMethods:     []string{"OpenWriterAt"},
-		UnimplementableObjectMethods: []string{"MimeType"},
-		QuickTestOK:                  true,
 	})
 }
 
@@ -113,7 +67,6 @@ func TestOff(t *testing.T) {
 		},
 		UnimplementableFsMethods:     []string{"OpenWriterAt"},
 		UnimplementableObjectMethods: []string{"MimeType"},
-		QuickTestOK:                  true,
 	})
 }
 
@@ -121,9 +74,6 @@ func TestOff(t *testing.T) {
 func TestObfuscate(t *testing.T) {
 	if *fstest.RemoteName != "" {
 		t.Skip("Skipping as -remote set")
-	}
-	if runtime.GOOS == "darwin" {
-		t.Skip("Skipping on macOS as obfuscating control characters makes filenames macOS can't cope with")
 	}
 	tempdir := filepath.Join(os.TempDir(), "rclone-crypt-test-obfuscate")
 	name := "TestCrypt3"
@@ -139,33 +89,5 @@ func TestObfuscate(t *testing.T) {
 		SkipBadWindowsCharacters:     true,
 		UnimplementableFsMethods:     []string{"OpenWriterAt"},
 		UnimplementableObjectMethods: []string{"MimeType"},
-		QuickTestOK:                  true,
-	})
-}
-
-// TestNoDataObfuscate runs integration tests against the remote
-func TestNoDataObfuscate(t *testing.T) {
-	if *fstest.RemoteName != "" {
-		t.Skip("Skipping as -remote set")
-	}
-	if runtime.GOOS == "darwin" {
-		t.Skip("Skipping on macOS as obfuscating control characters makes filenames macOS can't cope with")
-	}
-	tempdir := filepath.Join(os.TempDir(), "rclone-crypt-test-obfuscate")
-	name := "TestCrypt4"
-	fstests.Run(t, &fstests.Opt{
-		RemoteName: name + ":",
-		NilObject:  (*crypt.Object)(nil),
-		ExtraConfig: []fstests.ExtraConfigItem{
-			{Name: name, Key: "type", Value: "crypt"},
-			{Name: name, Key: "remote", Value: tempdir},
-			{Name: name, Key: "password", Value: obscure.MustObscure("potato2")},
-			{Name: name, Key: "filename_encryption", Value: "obfuscate"},
-			{Name: name, Key: "no_data_encryption", Value: "true"},
-		},
-		SkipBadWindowsCharacters:     true,
-		UnimplementableFsMethods:     []string{"OpenWriterAt"},
-		UnimplementableObjectMethods: []string{"MimeType"},
-		QuickTestOK:                  true,
 	})
 }

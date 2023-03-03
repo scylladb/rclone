@@ -1,16 +1,17 @@
 package restic
 
 import (
-	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"io"
+	"io/ioutil"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/rclone/rclone/cmd"
-	"github.com/rclone/rclone/fs/config/configfile"
+	"github.com/rclone/rclone/cmd/serve/httplib/httpflags"
 	"github.com/stretchr/testify/require"
 )
 
@@ -62,8 +63,6 @@ func createOverwriteDeleteSeq(t testing.TB, path string) []TestRequest {
 
 // TestResticHandler runs tests on the restic handler code, especially in append-only mode.
 func TestResticHandler(t *testing.T) {
-	ctx := context.Background()
-	configfile.Install()
 	buf := make([]byte, 32)
 	_, err := io.ReadFull(rand.Reader, buf)
 	require.NoError(t, err)
@@ -109,20 +108,28 @@ func TestResticHandler(t *testing.T) {
 	}
 
 	// setup rclone with a local backend in a temporary directory
-	tempdir := t.TempDir()
+	tempdir, err := ioutil.TempDir("", "rclone-restic-test-")
+	require.NoError(t, err)
 
-	// set append-only mode
-	opt := newOpt()
-	opt.AppendOnly = true
+	// make sure the tempdir is properly removed
+	defer func() {
+		err := os.RemoveAll(tempdir)
+		require.NoError(t, err)
+	}()
+
+	// globally set append-only mode
+	prev := appendOnly
+	appendOnly = true
+	defer func() {
+		appendOnly = prev // reset when done
+	}()
 
 	// make a new file system in the temp dir
 	f := cmd.NewFsSrc([]string{tempdir})
-	s, err := newServer(ctx, f, &opt)
-	require.NoError(t, err)
-	router := s.Server.Router()
+	srv := NewServer(f, &httpflags.Opt)
 
 	// create the repo
-	checkRequest(t, router.ServeHTTP,
+	checkRequest(t, srv.ServeHTTP,
 		newRequest(t, "POST", "/?create=true", nil),
 		[]wantFunc{wantCode(http.StatusOK)})
 
@@ -130,7 +137,7 @@ func TestResticHandler(t *testing.T) {
 		t.Run("", func(t *testing.T) {
 			for i, seq := range test.seq {
 				t.Logf("request %v: %v %v", i, seq.req.Method, seq.req.URL.Path)
-				checkRequest(t, router.ServeHTTP, seq.req, seq.want)
+				checkRequest(t, srv.ServeHTTP, seq.req, seq.want)
 			}
 		})
 	}

@@ -5,15 +5,15 @@ import (
 	cryptorand "crypto/rand"
 	"encoding/base64"
 	"encoding/binary"
-	"fmt"
 	mathrand "math/rand"
+
+	"github.com/pkg/errors"
 )
 
-// StringFn create a random string for test purposes using the random
-// number generator function passed in.
+// String create a random string for test purposes.
 //
 // Do not use these for passwords.
-func StringFn(n int, randIntn func(n int) int) string {
+func String(n int) string {
 	const (
 		vowel     = "aeiou"
 		consonant = "bcdfghjklmnpqrstvwxyz"
@@ -25,16 +25,9 @@ func StringFn(n int, randIntn func(n int) int) string {
 	for i := range out {
 		source := pattern[p]
 		p = (p + 1) % len(pattern)
-		out[i] = source[randIntn(len(source))]
+		out[i] = source[mathrand.Intn(len(source))]
 	}
 	return string(out)
-}
-
-// String create a random string for test purposes.
-//
-// Do not use these for passwords.
-func String(n int) string {
-	return StringFn(n, mathrand.Intn)
 }
 
 // Password creates a crypto strong password which is just about
@@ -52,10 +45,10 @@ func Password(bits int) (password string, err error) {
 	var pw = make([]byte, bytes)
 	n, err := cryptorand.Read(pw)
 	if err != nil {
-		return "", fmt.Errorf("password read failed: %w", err)
+		return "", errors.Wrap(err, "password read failed")
 	}
 	if n != bytes {
-		return "", fmt.Errorf("password short read: %d", n)
+		return "", errors.Errorf("password short read: %d", n)
 	}
 	password = base64.RawURLEncoding.EncodeToString(pw)
 	return password, nil
@@ -71,7 +64,7 @@ func Seed() error {
 	var seed int64
 	err := binary.Read(cryptorand.Reader, binary.LittleEndian, &seed)
 	if err != nil {
-		return fmt.Errorf("failed to read random seed: %w", err)
+		return errors.Wrap(err, "failed to read random seed")
 	}
 	mathrand.Seed(seed)
 	return nil

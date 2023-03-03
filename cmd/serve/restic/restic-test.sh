@@ -15,7 +15,7 @@ TestDropbox:
 TestFichier:
 TestFTP:
 TestGoogleCloudStorage:
-TestNetStorage:
+TestHubic:
 TestOneDrive:
 TestPcloud:
 TestQingStor:

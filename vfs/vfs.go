@@ -10,20 +10,21 @@
 // may be referred to as "".  However Stat strips slashes so you can
 // use paths with slashes in.
 //
-// # It also includes directory caching
+// It also includes directory caching
 //
 // The vfs package returns Error values to signal precisely which
 // error conditions have ocurred.  It may also return general errors
 // it receives.  It tries to use os Error values (e.g. os.ErrExist)
 // where possible.
-//
+
 //go:generate sh -c "go run make_open_tests.go | gofmt > open_test.go"
+
 package vfs
 
 import (
 	"context"
 	"fmt"
-	"io"
+	"io/ioutil"
 	"os"
 	"path"
 	"sort"
@@ -35,8 +36,6 @@ import (
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/cache"
 	"github.com/rclone/rclone/fs/log"
-	"github.com/rclone/rclone/fs/rc"
-	"github.com/rclone/rclone/fs/walk"
 	"github.com/rclone/rclone/vfs/vfscache"
 	"github.com/rclone/rclone/vfs/vfscommon"
 )
@@ -192,8 +191,12 @@ func New(f fs.Fs, opt *vfscommon.Options) *VFS {
 		vfs.Opt = vfscommon.DefaultOpt
 	}
 
-	// Fill out anything else
-	vfs.Opt.Init()
+	// Mask the permissions with the umask
+	vfs.Opt.DirPerms &= ^os.FileMode(vfs.Opt.Umask)
+	vfs.Opt.FilePerms &= ^os.FileMode(vfs.Opt.Umask)
+
+	// Make sure directories are returned as directories
+	vfs.Opt.DirPerms |= os.ModeDir
 
 	// Find a VFS with the same name and options and return it if possible
 	activeMu.Lock()
@@ -218,7 +221,7 @@ func New(f fs.Fs, opt *vfscommon.Options) *VFS {
 		vfs.pollChan = make(chan time.Duration)
 		do(context.TODO(), vfs.root.changeNotify, vfs.pollChan)
 		vfs.pollChan <- vfs.Opt.PollInterval
-	} else if vfs.Opt.PollInterval > 0 {
+	} else {
 		fs.Infof(f, "poll-interval is not supported by this remote")
 	}
 
@@ -235,32 +238,6 @@ func New(f fs.Fs, opt *vfscommon.Options) *VFS {
 	cache.PinUntilFinalized(f, vfs)
 
 	return vfs
-}
-
-// Stats returns info about the VFS
-func (vfs *VFS) Stats() (out rc.Params) {
-	out = make(rc.Params)
-	out["fs"] = fs.ConfigString(vfs.f)
-	out["opt"] = vfs.Opt
-	out["inUse"] = atomic.LoadInt32(&vfs.inUse)
-
-	var (
-		dirs  int
-		files int
-	)
-	vfs.root.walk(func(d *Dir) {
-		dirs++
-		files += len(d.items)
-	})
-	inf := make(rc.Params)
-	out["metadataCache"] = inf
-	inf["dirs"] = dirs
-	inf["files"] = files
-
-	if vfs.cache != nil {
-		out["diskCache"] = vfs.cache.Stats()
-	}
-	return out
 }
 
 // Return the number of active cache entries and a VFS if any are in
@@ -368,6 +345,7 @@ func (vfs *VFS) WaitForWriters(timeout time.Duration) {
 		tick.Reset(tickTime)
 		select {
 		case <-tick.C:
+			break
 		case <-deadline.C:
 			fs.Errorf(nil, "Exiting even though %d writers active and %d cache items in use after %v\n%s", writers, cacheInUse, timeout, vfs.cache.Dump())
 			return
@@ -564,7 +542,7 @@ func fillInMissingSizes(total, used, free, unknownFree int64) (newTotal, newUsed
 	return total, used, free
 }
 
-// If the total size isn't known then we will aim for this many bytes free (1 PiB)
+// If the total size isn't known then we will aim for this many bytes free (1PB)
 const unknownFreeBytes = 1 << 50
 
 // Statfs returns into about the filing system if known
@@ -578,32 +556,15 @@ func (vfs *VFS) Statfs() (total, used, free int64) {
 	defer vfs.usageMu.Unlock()
 	total, used, free = -1, -1, -1
 	doAbout := vfs.f.Features().About
-	if (doAbout != nil || vfs.Opt.UsedIsSize) && (vfs.usageTime.IsZero() || time.Since(vfs.usageTime) >= vfs.Opt.DirCacheTime) {
+	if doAbout != nil && (vfs.usageTime.IsZero() || time.Since(vfs.usageTime) >= vfs.Opt.DirCacheTime) {
 		var err error
-		ctx := context.TODO()
-		if doAbout == nil {
-			vfs.usage = &fs.Usage{}
-		} else {
-			vfs.usage, err = doAbout(ctx)
-		}
-		if vfs.Opt.UsedIsSize {
-			var usedBySizeAlgorithm int64
-			// Algorithm from `rclone size`
-			err = walk.ListR(ctx, vfs.f, "", true, -1, walk.ListObjects, func(entries fs.DirEntries) error {
-				entries.ForObject(func(o fs.Object) {
-					usedBySizeAlgorithm += o.Size()
-				})
-				return nil
-			})
-			vfs.usage.Used = &usedBySizeAlgorithm
-		}
+		vfs.usage, err = doAbout(context.TODO())
 		vfs.usageTime = time.Now()
 		if err != nil {
 			fs.Errorf(vfs.f, "Statfs failed: %v", err)
 			return
 		}
 	}
-
 	if u := vfs.usage; u != nil {
 		if u.Total != nil {
 			total = *u.Total
@@ -615,11 +576,6 @@ func (vfs *VFS) Statfs() (total, used, free int64) {
 			used = *u.Used
 		}
 	}
-
-	if int64(vfs.Opt.DiskSpaceTotalSize) >= 0 {
-		total = int64(vfs.Opt.DiskSpaceTotalSize)
-	}
-
 	total, used, free = fillInMissingSizes(total, used, free, unknownFreeBytes)
 	return
 }
@@ -697,7 +653,7 @@ func (vfs *VFS) ReadFile(filename string) (b []byte, err error) {
 		return nil, err
 	}
 	defer fs.CheckClose(f, &err)
-	return io.ReadAll(f)
+	return ioutil.ReadAll(f)
 }
 
 // AddVirtual adds the object (file or dir) to the directory cache

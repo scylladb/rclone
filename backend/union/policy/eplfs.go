@@ -2,7 +2,6 @@ package policy
 
 import (
 	"context"
-	"errors"
 	"math"
 
 	"github.com/rclone/rclone/backend/union/upstream"
@@ -19,8 +18,6 @@ type EpLfs struct {
 	EpAll
 }
 
-var errNoUpstreamsFound = errors.New("no upstreams found with more than min_free_space space spare")
-
 func (p *EpLfs) lfs(upstreams []*upstream.Fs) (*upstream.Fs, error) {
 	var minFreeSpace int64 = math.MaxInt64
 	var lfsupstream *upstream.Fs
@@ -30,34 +27,30 @@ func (p *EpLfs) lfs(upstreams []*upstream.Fs) (*upstream.Fs, error) {
 			fs.LogPrintf(fs.LogLevelNotice, nil,
 				"Free Space is not supported for upstream %s, treating as infinite", u.Name())
 		}
-		if space < minFreeSpace && space > int64(u.Opt.MinFreeSpace) {
+		if space < minFreeSpace {
 			minFreeSpace = space
 			lfsupstream = u
 		}
 	}
 	if lfsupstream == nil {
-		return nil, errNoUpstreamsFound
+		return nil, fs.ErrorObjectNotFound
 	}
 	return lfsupstream, nil
 }
 
 func (p *EpLfs) lfsEntries(entries []upstream.Entry) (upstream.Entry, error) {
-	var minFreeSpace int64 = math.MaxInt64
+	var minFreeSpace int64
 	var lfsEntry upstream.Entry
 	for _, e := range entries {
-		u := e.UpstreamFs()
-		space, err := u.GetFreeSpace()
+		space, err := e.UpstreamFs().GetFreeSpace()
 		if err != nil {
 			fs.LogPrintf(fs.LogLevelNotice, nil,
-				"Free Space is not supported for upstream %s, treating as infinite", u.Name())
+				"Free Space is not supported for upstream %s, treating as infinite", e.UpstreamFs().Name())
 		}
-		if space < minFreeSpace && space > int64(u.Opt.MinFreeSpace) {
+		if space < minFreeSpace {
 			minFreeSpace = space
 			lfsEntry = e
 		}
-	}
-	if lfsEntry == nil {
-		return nil, errNoUpstreamsFound
 	}
 	return lfsEntry, nil
 }

@@ -50,7 +50,7 @@ func (f *testLister) listAlbums(ctx context.Context, shared bool) (all *albums, 
 
 // mock listUploads for testing
 func (f *testLister) listUploads(ctx context.Context, dir string) (entries fs.DirEntries, err error) {
-	entries = f.uploaded[dir]
+	entries, _ = f.uploaded[dir]
 	return entries, nil
 }
 
@@ -62,11 +62,6 @@ func (f *testLister) dirTime() time.Time {
 // mock startYear for testing
 func (f *testLister) startYear() int {
 	return 2000
-}
-
-// mock includeArchived for testing
-func (f *testLister) includeArchived() bool {
-	return false
 }
 
 func TestPatternMatch(t *testing.T) {

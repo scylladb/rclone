@@ -6,6 +6,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/pkg/errors"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/log"
 	"github.com/rclone/rclone/vfs/vfscache"
@@ -53,7 +54,7 @@ func newRWFileHandle(d *Dir, f *File, flags int) (fh *RWFileHandle, err error) {
 	if !fh.readOnly() && (fh.flags&os.O_TRUNC != 0 || (fh.flags&os.O_CREATE != 0 && !exists)) {
 		err = fh.Truncate(0)
 		if err != nil {
-			return nil, fmt.Errorf("cache open with O_TRUNC: failed to truncate: %w", err)
+			return nil, errors.Wrap(err, "cache open with O_TRUNC: failed to truncate")
 		}
 		// we definitely need to write back the item even if we don't write to it
 		item.Dirty()
@@ -91,7 +92,7 @@ func (fh *RWFileHandle) openPending() (err error) {
 	o := fh.file.getObject()
 	err = fh.item.Open(o)
 	if err != nil {
-		return fmt.Errorf("open RW handle failed to open cache file: %w", err)
+		return errors.Wrap(err, "open RW handle failed to open cache file")
 	}
 
 	size := fh._size() // update size in file and read size
@@ -139,7 +140,7 @@ func (fh *RWFileHandle) updateSize() {
 // close the file handle returning EBADF if it has been
 // closed already.
 //
-// Must be called with fh.mu held.
+// Must be called with fh.mu held
 //
 // Note that we leave the file around in the cache on error conditions
 // to give the user a chance to recover it.
@@ -157,9 +158,6 @@ func (fh *RWFileHandle) close() (err error) {
 	if fh.opened {
 		err = fh.item.Close(fh.file.setObject)
 		fh.opened = false
-	} else {
-		// apply any pending mod times if any
-		_ = fh.file.applyPendingModTime()
 	}
 
 	if !fh.readOnly() {

@@ -12,164 +12,94 @@ When filing an issue, please include the following information if
 possible as well as a description of the problem.  Make sure you test
 with the [latest beta of rclone](https://beta.rclone.org/):
 
-  * Rclone version (e.g. output from `rclone version`)
-  * Which OS you are using and how many bits (e.g. Windows 10, 64 bit)
+  * Rclone version (e.g. output from `rclone -V`)
+  * Which OS you are using and how many bits (e.g. Windows 7, 64 bit)
   * The command you were trying to run (e.g. `rclone copy /tmp remote:tmp`)
   * A log of the command with the `-vv` flag (e.g. output from `rclone -vv copy /tmp remote:tmp`)
     * if the log contains secrets then edit the file with a text editor first to obscure them
 
-## Submitting a new feature or bug fix ##
+## Submitting a pull request ##
 
 If you find a bug that you'd like to fix, or a new feature that you'd
 like to implement then please submit a pull request via GitHub.
 
-If it is a big feature, then [make an issue](https://github.com/rclone/rclone/issues) first so it can be discussed.
+If it is a big feature then make an issue first so it can be discussed.
 
-To prepare your pull request first press the fork button on [rclone's GitHub
+You'll need a Go environment set up with GOPATH set.  See [the Go
+getting started docs](https://golang.org/doc/install) for more info.
+
+First in your web browser press the fork button on [rclone's GitHub
 page](https://github.com/rclone/rclone).
 
-Then [install Git](https://git-scm.com/downloads) and set your public contribution [name](https://docs.github.com/en/github/getting-started-with-github/setting-your-username-in-git) and [email](https://docs.github.com/en/github/setting-up-and-managing-your-github-user-account/setting-your-commit-email-address#setting-your-commit-email-address-in-git).
+Now in your terminal
 
-Next open your terminal, change directory to your preferred folder and initialise your local rclone project:
-
-    git clone https://github.com/rclone/rclone.git
-    cd rclone
+    go get -u github.com/rclone/rclone
+    cd $GOPATH/src/github.com/rclone/rclone
     git remote rename origin upstream
-      # if you have SSH keys setup in your GitHub account:
     git remote add origin git@github.com:YOURUSER/rclone.git
-      # otherwise:
-    git remote add origin https://github.com/YOURUSER/rclone.git
 
-Note that most of the terminal commands in the rest of this guide must be executed from the rclone folder created above.
-
-Now [install Go](https://golang.org/doc/install) and verify your installation:
-
-    go version
-
-Great, you can now compile and execute your own version of rclone:
-
-    go build
-    ./rclone version
-
-(Note that you can also replace `go build` with `make`, which will include a
-more accurate version number in the executable as well as enable you to specify
-more build options.) Finally make a branch to add your new feature
+Make a branch to add your new feature
 
     git checkout -b my-new-feature
 
 And get hacking.
 
-You may like one of the [popular editors/IDE's for Go](https://github.com/golang/go/wiki/IDEsAndTextEditorPlugins) and a quick view on the rclone [code organisation](#code-organisation).
+When ready - run the unit tests for the code you changed
 
-When ready - test the affected functionality and run the unit tests for the code you changed
-
-    cd folder/with/changed/files
     go test -v
 
 Note that you may need to make a test remote, e.g. `TestSwift` for some
 of the unit tests.
 
-This is typically enough if you made a simple bug fix, otherwise please read the rclone [testing](#testing) section too.
+Note the top level Makefile targets
+
+  * make check
+  * make test
+
+Both of these will be run by Travis when you make a pull request but
+you can do this yourself locally too.  These require some extra go
+packages which you can install with
+
+  * make build_dep
 
 Make sure you
 
-  * Add [unit tests](#testing) for a new feature.
   * Add [documentation](#writing-documentation) for a new feature.
-  * [Commit your changes](#committing-your-changes) using the [message guideline](#commit-messages).
+  * Follow the [commit message guidelines](#commit-messages).
+  * Add [unit tests](#testing) for a new feature
+  * squash commits down to one per feature
+  * rebase to master with `git rebase master`
 
-When you are done with that push your changes to GitHub:
+When you are done with that
 
-    git push -u origin my-new-feature
+    git push origin my-new-feature
 
-and open the GitHub website to [create your pull
+Go to the GitHub website and click [Create pull
 request](https://help.github.com/articles/creating-a-pull-request/).
 
-Your changes will then get reviewed and you might get asked to fix some stuff. If so, then make the changes in the same branch, commit and push your updates to GitHub.
+You patch will get reviewed and you might get asked to fix some stuff.
 
-You may sometimes be asked to [base your changes on the latest master](#basing-your-changes-on-the-latest-master) or [squash your commits](#squashing-your-commits).
+If so, then make the changes in the same branch, squash the commits (make multiple commits one commit) by running:
+```
+git log # See how many commits you want to squash
+git reset --soft HEAD~2 # This squashes the 2 latest commits together.
+git status # Check what will happen, if you made a mistake resetting, you can run git reset 'HEAD@{1}' to undo.
+git commit # Add a new commit message.
+git push --force # Push the squashed commit to your GitHub repo.
+# For more, see Stack Overflow, Git docs, or generally Duck around the web. jtagcat also recommends wizardzines.com
+```
 
-## Using Git and GitHub ##
-
-### Committing your changes ###
-
-Follow the guideline for [commit messages](#commit-messages) and then:
-
-    git checkout my-new-feature      # To switch to your branch
-    git status                       # To see the new and changed files
-    git add FILENAME                 # To select FILENAME for the commit
-    git status                       # To verify the changes to be committed
-    git commit                       # To do the commit
-    git log                          # To verify the commit. Use q to quit the log
-
-You can modify the message or changes in the latest commit using:
-
-    git commit --amend
-
-If you amend to commits that have been pushed to GitHub, then you will have to [replace your previously pushed commits](#replacing-your-previously-pushed-commits).
-
-### Replacing your previously pushed commits ###
-
-Note that you are about to rewrite the GitHub history of your branch. It is good practice to involve your collaborators before modifying commits that have been pushed to GitHub.
-
-Your previously pushed commits are replaced by:
-
-    git push --force origin my-new-feature 
-
-### Basing your changes on the latest master ###
-
-To base your changes on the latest version of the [rclone master](https://github.com/rclone/rclone/tree/master) (upstream):
-
-    git checkout master
-    git fetch upstream
-    git merge --ff-only
-    git push origin --follow-tags    # optional update of your fork in GitHub
-    git checkout my-new-feature
-    git rebase master
-
-If you rebase commits that have been pushed to GitHub, then you will have to [replace your previously pushed commits](#replacing-your-previously-pushed-commits).
-
-### Squashing your commits ###
-
-To combine your commits into one commit:
-
-    git log                          # To count the commits to squash, e.g. the last 2
-    git reset --soft HEAD~2          # To undo the 2 latest commits
-    git status                       # To check everything is as expected
-
-If everything is fine, then make the new combined commit:
-
-    git commit                       # To commit the undone commits as one
-
-otherwise, you may roll back using:
-
-    git reflog                       # To check that HEAD{1} is your previous state
-    git reset --soft 'HEAD@{1}'      # To roll back to your previous state
-
-If you squash commits that have been pushed to GitHub, then you will have to [replace your previously pushed commits](#replacing-your-previously-pushed-commits).
-
-Tip: You may like to use `git rebase -i master` if you are experienced or have a more complex situation.
-
-### GitHub Continuous Integration ###
+## CI for your fork ##
 
 rclone currently uses [GitHub Actions](https://github.com/rclone/rclone/actions) to build and test the project, which should be automatically available for your fork too from the `Actions` tab in your repository.
 
 ## Testing ##
 
-### Quick testing ###
-
 rclone's tests are run from the go testing framework, so at the top
 level you can run this to run all the tests.
 
     go test -v ./...
-
-You can also use `make`, if supported by your platform
-
-    make quicktest
-
-The quicktest is [automatically run by GitHub](#github-continuous-integration) when you push your branch to GitHub.
-
-### Backend testing ###
-
+    
 rclone contains a mixture of unit tests and integration tests.
 Because it is difficult (and in some respects pointless) to test cloud
 storage systems by mocking all their interfaces, rclone unit tests can
@@ -185,8 +115,8 @@ are skipped if `TestDrive:` isn't defined.
     cd backend/drive
     go test -v
 
-You can then run the integration tests which test all of rclone's
-operations.  Normally these get run against the local file system,
+You can then run the integration tests which tests all of rclone's
+operations.  Normally these get run against the local filing system,
 but they can be run against any of the remotes.
 
     cd fs/sync
@@ -197,25 +127,18 @@ but they can be run against any of the remotes.
     go test -v -remote TestDrive:
 
 If you want to use the integration test framework to run these tests
-altogether with an HTML report and test retries then from the
+all together with an HTML report and test retries then from the
 project root:
 
     go install github.com/rclone/rclone/fstest/test_all
     test_all -backend drive
 
-### Full integration testing ###
-
 If you want to run all the integration tests against all the remotes,
 then change into the project root and run
 
-    make check
     make test
 
-The commands may require some extra go packages which you can install with
-
-    make build_dep
-
-The full integration tests are run daily on the integration test server. You can
+This command is run daily on the integration test server. You can
 find the results at https://pub.rclone.org/integration-tests/
 
 ## Code Organisation ##
@@ -223,17 +146,16 @@ find the results at https://pub.rclone.org/integration-tests/
 Rclone code is organised into a small number of top level directories
 with modules beneath.
 
-  * backend - the rclone backends for interfacing to cloud providers -
+  * backend - the rclone backends for interfacing to cloud providers - 
     * all - import this to load all the cloud providers
     * ...providers
   * bin - scripts for use while building or maintaining rclone
   * cmd - the rclone commands
     * all - import this to load all the commands
     * ...commands
-  * cmdtest - end-to-end tests of commands, flags, environment variables,...
   * docs - the documentation and website
     * content - adjust these docs only - everything else is autogenerated
-      * command - these are auto-generated - edit the corresponding .go file
+      * command - these are auto generated - edit the corresponding .go file
   * fs - main rclone definitions - minimal amount of code
     * accounting - bandwidth limiting and statistics
     * asyncreader - an io.Reader which reads ahead
@@ -275,39 +197,18 @@ If you add a new general flag (not for a backend), then document it in
 alphabetical order.
 
 If you add a new backend option/flag, then it should be documented in
-the source file in the `Help:` field.
-
-  * Start with the most important information about the option,
-    as a single sentence on a single line.
-    * This text will be used for the command-line flag help.
-    * It will be combined with other information, such as any default value,
-      and the result will look odd if not written as a single sentence.
-    * It should end with a period/full stop character, which will be shown
-      in docs but automatically removed when producing the flag help.
-    * Try to keep it below 80 characters, to reduce text wrapping in the terminal.
-  * More details can be added in a new paragraph, after an empty line (`"\n\n"`).
-    * Like with docs generated from Markdown, a single line break is ignored
-      and two line breaks creates a new paragraph.
-    * This text will be shown to the user in `rclone config`
-      and in the docs (where it will be added by `make backenddocs`,
-      normally run some time before next release).
-  * To create options of enumeration type use the `Examples:` field.
-    * Each example value have their own `Help:` field, but they are treated
-      a bit different than the main option help text. They will be shown
-      as an unordered list, therefore a single line break is enough to
-      create a new list item. Also, for enumeration texts like name of
-      countries, it looks better without an ending period/full stop character.
+the source file in the `Help:` field.  The first line of this is used
+for the flag help, the remainder is shown to the user in `rclone
+config` and is added to the docs with `make backenddocs`.
 
 The only documentation you need to edit are the `docs/content/*.md`
-files.  The `MANUAL.*`, `rclone.1`, website, etc. are all auto-generated
+files.  The MANUAL.*, rclone.1, web site, etc. are all auto generated
 from those during the release process.  See the `make doc` and `make
 website` targets in the Makefile if you are interested in how.  You
 don't need to run these when adding a feature.
 
 Documentation for rclone sub commands is with their code, e.g.
-`cmd/ls/ls.go`. Write flag help strings as a single sentence on a single
-line, without a period/full stop character at the end, as it will be
-combined unmodified with other information (such as any default value).
+`cmd/ls/ls.go`.
 
 Note that you can use [GitHub's online editor](https://help.github.com/en/github/managing-files-in-a-repository/editing-files-in-another-users-repository)
 for small changes in the docs which makes it very easy.
@@ -350,7 +251,7 @@ And here is an example of a longer one:
 ```
 mount: fix hang on errored upload
 
-In certain circumstances, if an upload failed then the mount could hang
+In certain circumstances if an upload failed then the mount could hang
 indefinitely. This was fixed by closing the read pipe after the Put
 completed.  This will cause the write side to return a pipe closed
 error fixing the hang.
@@ -364,7 +265,7 @@ rclone uses the [go
 modules](https://tip.golang.org/cmd/go/#hdr-Modules__module_versions__and_more)
 support in go1.11 and later to manage its dependencies.
 
-rclone can be built with modules outside of the `GOPATH`.
+rclone can be built with modules outside of the GOPATH
 
 To add a dependency `github.com/ncw/new_dependency` see the
 instructions below.  These will fetch the dependency and add it to
@@ -382,7 +283,7 @@ and `go.sum` in the same commit as your other changes.
 
 If you need to update a dependency then run
 
-    GO111MODULE=on go get -u golang.org/x/crypto
+    GO111MODULE=on go get -u github.com/pkg/errors
 
 Check in a single commit as above.
 
@@ -425,15 +326,15 @@ Research
 Getting going
 
   * Create `backend/remote/remote.go` (copy this from a similar remote)
-    * box is a good one to start from if you have a directory-based remote
-    * b2 is a good one to start from if you have a bucket-based remote
+    * box is a good one to start from if you have a directory based remote
+    * b2 is a good one to start from if you have a bucket based remote
   * Add your remote to the imports in `backend/all/all.go`
   * HTTP based remotes are easiest to maintain if they use rclone's rest module, but if there is a really good go SDK then use that instead.
   * Try to implement as many optional methods as possible as it makes the remote more usable.
   * Use lib/encoder to make sure we can encode any path name and `rclone info` to help determine the encodings needed
     * `rclone purge -v TestRemote:rclone-info`
-    * `rclone test info --all --remote-encoding None -vv --write-json remote.json TestRemote:rclone-info`
-    * `go run cmd/test/info/internal/build_csv/main.go -o remote.csv remote.json`
+    * `rclone info --remote-encoding None -vv --write-json remote.json TestRemote:rclone-info`
+    * `go run cmd/info/internal/build_csv/main.go -o remote.csv remote.json`
     * open `remote.csv` in a spreadsheet and examine
 
 Unit tests
@@ -499,7 +400,7 @@ Usage
    - If this variable doesn't exist, plugin support is disabled.
    - Plugins must be compiled against the exact version of rclone to work.
      (The rclone used during building the plugin must be the same as the source of rclone)
-
+     
 Building
 
 To turn your existing additions into a Go plugin, move them to an external repository

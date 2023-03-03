@@ -5,7 +5,6 @@ package api
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -19,7 +18,7 @@ const (
 	timeFormatJSON = `"` + timeFormatParameters + `"`
 )
 
-// Time represents date and time information for the
+// Time represents represents date and time information for the
 // filefabric API
 type Time time.Time
 
@@ -52,50 +51,15 @@ func (t Time) String() string {
 	return time.Time(t).UTC().Format(timeFormatParameters)
 }
 
-// Int represents an integer which can be represented in JSON as a
-// quoted integer or an integer.
-type Int int
-
-// MarshalJSON turns a Int into JSON
-func (i *Int) MarshalJSON() (out []byte, err error) {
-	return json.Marshal((*int)(i))
-}
-
-// UnmarshalJSON turns JSON into a Int
-func (i *Int) UnmarshalJSON(data []byte) error {
-	if len(data) >= 2 && data[0] == '"' && data[len(data)-1] == '"' {
-		data = data[1 : len(data)-1]
-	}
-	return json.Unmarshal(data, (*int)(i))
-}
-
-// String represents an string which can be represented in JSON as a
-// quoted string or an integer.
-type String string
-
-// MarshalJSON turns a String into JSON
-func (s *String) MarshalJSON() (out []byte, err error) {
-	return json.Marshal((*string)(s))
-}
-
-// UnmarshalJSON turns JSON into a String
-func (s *String) UnmarshalJSON(data []byte) error {
-	err := json.Unmarshal(data, (*string)(s))
-	if err != nil {
-		*s = String(data)
-	}
-	return nil
-}
-
 // Status return returned in all status responses
 type Status struct {
 	Code    string `json:"status"`
 	Message string `json:"statusmessage"`
-	TaskID  String `json:"taskid"`
+	TaskID  string `json:"taskid"`
 	// Warning string `json:"warning"` // obsolete
 }
 
-// Status satisfies the error interface
+// Status statisfies the error interface
 func (e *Status) Error() string {
 	return fmt.Sprintf("%s (%s)", e.Message, e.Code)
 }
@@ -151,7 +115,7 @@ type GetFolderContentsResponse struct {
 	Total  int    `json:"total,string"`
 	Items  []Item `json:"filelist"`
 	Folder Item   `json:"folder"`
-	From   Int    `json:"from"`
+	From   int    `json:"from,string"`
 	//Count         int    `json:"count"`
 	Pid           string `json:"pid"`
 	RefreshResult Status `json:"refreshresult"`

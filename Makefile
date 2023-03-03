@@ -46,13 +46,13 @@ endif
 .PHONY: rclone test_all vars version
 
 rclone:
-	go build -v --ldflags "-s -X github.com/rclone/rclone/fs.Version=$(TAG)" $(BUILDTAGS) $(BUILD_ARGS)
+	go build -v --ldflags "-s -X github.com/rclone/rclone/fs.Version=$(TAG)" $(BUILDTAGS)
 	mkdir -p `go env GOPATH`/bin/
 	cp -av rclone`go env GOEXE` `go env GOPATH`/bin/rclone`go env GOEXE`.new
 	mv -v `go env GOPATH`/bin/rclone`go env GOEXE`.new `go env GOPATH`/bin/rclone`go env GOEXE`
 
 test_all:
-	go install --ldflags "-s -X github.com/rclone/rclone/fs.Version=$(TAG)" $(BUILDTAGS) $(BUILD_ARGS) github.com/rclone/rclone/fstest/test_all
+	go install --ldflags "-s -X github.com/rclone/rclone/fs.Version=$(TAG)" $(BUILDTAGS) github.com/rclone/rclone/fstest/test_all
 
 vars:
 	@echo SHELL="'$(SHELL)'"
@@ -81,9 +81,6 @@ quicktest:
 racequicktest:
 	RCLONE_CONFIG="/notfound" go test $(BUILDTAGS) -cpu=2 -race ./...
 
-compiletest:
-	RCLONE_CONFIG="/notfound" go test $(BUILDTAGS) -run XXX ./...
-
 # Do source code quality checks
 check:	rclone
 	@echo "-- START CODE QUALITY REPORT -------------------------------"
@@ -96,25 +93,22 @@ build_dep:
 
 # Get the release dependencies we only install on linux
 release_dep_linux:
-	go run bin/get-github-release.go -extract nfpm goreleaser/nfpm 'nfpm_.*_Linux_x86_64\.tar\.gz'
+	cd /tmp && go get github.com/goreleaser/nfpm/...
+	cd /tmp && go get github.com/github-release/github-release
 
 # Get the release dependencies we only install on Windows
 release_dep_windows:
-	GOOS="" GOARCH="" go install github.com/josephspurrier/goversioninfo/cmd/goversioninfo@latest
+	GO111MODULE=off GOOS="" GOARCH="" go get github.com/josephspurrier/goversioninfo/cmd/goversioninfo
 
 # Update dependencies
 showupdates:
 	@echo "*** Direct dependencies that could be updated ***"
 	@GO111MODULE=on go list -u -f '{{if (and (not (or .Main .Indirect)) .Update)}}{{.Path}}: {{.Version}} -> {{.Update.Version}}{{end}}' -m all 2> /dev/null
 
-# Update direct dependencies only
-updatedirect:
-	GO111MODULE=on go get -d $$(go list -m -f '{{if not (or .Main .Indirect)}}{{.Path}}{{end}}' all)
-	GO111MODULE=on go mod tidy
-
 # Update direct and indirect dependencies and test dependencies
 update:
-	GO111MODULE=on go get -d -u -t ./...
+	GO111MODULE=on go get -u -t ./...
+	-#GO111MODULE=on go get -d $(go list -m -f '{{if not (or .Main .Indirect)}}{{.Path}}{{end}}' all)
 	GO111MODULE=on go mod tidy
 
 # Tidy the module dependencies
@@ -126,7 +120,7 @@ doc:	rclone.1 MANUAL.html MANUAL.txt rcdocs commanddocs
 rclone.1:	MANUAL.md
 	pandoc -s --from markdown-smart --to man MANUAL.md -o rclone.1
 
-MANUAL.md:	bin/make_manual.py docs/content/*.md commanddocs backenddocs rcdocs
+MANUAL.md:	bin/make_manual.py docs/content/*.md commanddocs backenddocs
 	./bin/make_manual.py
 
 MANUAL.html:	MANUAL.md
@@ -194,10 +188,10 @@ upload_github:
 	./bin/upload-github $(TAG)
 
 cross:	doc
-	go run bin/cross-compile.go -release current $(BUILD_FLAGS) $(BUILDTAGS) $(BUILD_ARGS) $(TAG)
+	go run bin/cross-compile.go -release current $(BUILDTAGS) $(TAG)
 
 beta:
-	go run bin/cross-compile.go $(BUILD_FLAGS) $(BUILDTAGS) $(BUILD_ARGS) $(TAG)
+	go run bin/cross-compile.go $(BUILDTAGS) $(TAG)
 	rclone -v copy build/ memstore:pub-rclone-org/$(TAG)
 	@echo Beta release ready at https://pub.rclone.org/$(TAG)/
 
@@ -205,7 +199,7 @@ log_since_last_release:
 	git log $(LAST_TAG)..
 
 compile_all:
-	go run bin/cross-compile.go -compile-only $(BUILD_FLAGS) $(BUILDTAGS) $(BUILD_ARGS) $(TAG)
+	go run bin/cross-compile.go -compile-only $(BUILDTAGS) $(TAG)
 
 ci_upload:
 	sudo chown -R $$USER build
@@ -219,7 +213,7 @@ endif
 
 ci_beta:
 	git log $(LAST_TAG).. > /tmp/git-log.txt
-	go run bin/cross-compile.go -release beta-latest -git-log /tmp/git-log.txt $(BUILD_FLAGS) $(BUILDTAGS) $(BUILD_ARGS) $(TAG)
+	go run bin/cross-compile.go -release beta-latest -git-log /tmp/git-log.txt $(BUILD_FLAGS) $(BUILDTAGS) $(TAG)
 	rclone --config bin/travis.rclone.conf -v copy --exclude '*beta-latest*' build/ $(BETA_UPLOAD)
 ifeq ($(or $(BRANCH_PATH),$(RELEASE_TAG)),)
 	rclone --config bin/travis.rclone.conf -v copy --include '*beta-latest*' --include version.txt build/ $(BETA_UPLOAD_ROOT)$(BETA_SUBDIR)
@@ -248,48 +242,18 @@ retag:
 startdev:
 	@echo "Version is $(VERSION)"
 	@echo "Next version is $(NEXT_VERSION)"
-	echo -e "package fs\n\n// VersionTag of rclone\nvar VersionTag = \"$(NEXT_VERSION)\"\n" | gofmt > fs/versiontag.go
+	echo -e "package fs\n\n// Version of rclone\nvar Version = \"$(NEXT_VERSION)-DEV\"\n" | gofmt > fs/version.go
 	echo -n "$(NEXT_VERSION)" > docs/layouts/partials/version.html
 	echo "$(NEXT_VERSION)" > VERSION
-	git commit -m "Start $(NEXT_VERSION)-DEV development" fs/versiontag.go VERSION docs/layouts/partials/version.html
+	git commit -m "Start $(NEXT_VERSION)-DEV development" fs/version.go VERSION docs/layouts/partials/version.html
 
 startstable:
 	@echo "Version is $(VERSION)"
 	@echo "Next stable version is $(NEXT_PATCH_VERSION)"
-	echo -e "package fs\n\n// VersionTag of rclone\nvar VersionTag = \"$(NEXT_PATCH_VERSION)\"\n" | gofmt > fs/versiontag.go
+	echo -e "package fs\n\n// Version of rclone\nvar Version = \"$(NEXT_PATCH_VERSION)-DEV\"\n" | gofmt > fs/version.go
 	echo -n "$(NEXT_PATCH_VERSION)" > docs/layouts/partials/version.html
 	echo "$(NEXT_PATCH_VERSION)" > VERSION
-	git commit -m "Start $(NEXT_PATCH_VERSION)-DEV development" fs/versiontag.go VERSION docs/layouts/partials/version.html
+	git commit -m "Start $(NEXT_PATCH_VERSION)-DEV development" fs/version.go VERSION docs/layouts/partials/version.html
 
 winzip:
 	zip -9 rclone-$(TAG).zip rclone.exe
-
-# docker volume plugin
-PLUGIN_USER ?= rclone
-PLUGIN_TAG ?= latest
-PLUGIN_BASE_TAG ?= latest
-PLUGIN_ARCH ?= amd64
-PLUGIN_IMAGE := $(PLUGIN_USER)/docker-volume-rclone:$(PLUGIN_TAG)
-PLUGIN_BASE := $(PLUGIN_USER)/rclone:$(PLUGIN_BASE_TAG)
-PLUGIN_BUILD_DIR := ./build/docker-plugin
-PLUGIN_CONTRIB_DIR := ./contrib/docker-plugin/managed
-
-docker-plugin-create:
-	docker buildx inspect |grep -q /${PLUGIN_ARCH} || \
-	docker run --rm --privileged tonistiigi/binfmt --install all
-	rm -rf ${PLUGIN_BUILD_DIR}
-	docker buildx build \
-		--no-cache --pull \
-		--build-arg BASE_IMAGE=${PLUGIN_BASE} \
-		--platform linux/${PLUGIN_ARCH} \
-		--output ${PLUGIN_BUILD_DIR}/rootfs \
-		${PLUGIN_CONTRIB_DIR}
-	cp ${PLUGIN_CONTRIB_DIR}/config.json ${PLUGIN_BUILD_DIR}
-	docker plugin rm --force ${PLUGIN_IMAGE} 2>/dev/null || true
-	docker plugin create ${PLUGIN_IMAGE} ${PLUGIN_BUILD_DIR}
-
-docker-plugin-push:
-	docker plugin push ${PLUGIN_IMAGE}
-	docker plugin rm ${PLUGIN_IMAGE}
-
-docker-plugin: docker-plugin-create docker-plugin-push

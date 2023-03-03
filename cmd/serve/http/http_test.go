@@ -3,54 +3,39 @@ package http
 import (
 	"context"
 	"flag"
-	"io"
+	"io/ioutil"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	_ "github.com/rclone/rclone/backend/local"
-	"github.com/rclone/rclone/cmd/serve/proxy/proxyflags"
+	"github.com/rclone/rclone/cmd/serve/httplib"
 	"github.com/rclone/rclone/fs"
+	"github.com/rclone/rclone/fs/config"
 	"github.com/rclone/rclone/fs/filter"
-	libhttp "github.com/rclone/rclone/lib/http"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 var (
 	updateGolden = flag.Bool("updategolden", false, "update golden files for regression test")
+	httpServer   *server
+	testURL      string
 )
 
 const (
 	testBindAddress = "localhost:0"
-	testUser        = "user"
-	testPass        = "pass"
 	testTemplate    = "testdata/golden/testindex.html"
 )
 
-func start(ctx context.Context, t *testing.T, f fs.Fs) (s *HTTP, testURL string) {
-	opts := Options{
-		HTTP: libhttp.DefaultCfg(),
-		Template: libhttp.TemplateConfig{
-			Path: testTemplate,
-		},
-	}
-	opts.HTTP.ListenAddr = []string{testBindAddress}
-	if proxyflags.Opt.AuthProxy == "" {
-		opts.Auth.BasicUser = testUser
-		opts.Auth.BasicPass = testPass
-	}
-
-	s, err := run(ctx, f, opts)
-	require.NoError(t, err, "failed to start server")
-
-	urls := s.server.URLs()
-	require.Len(t, urls, 1, "expected one URL")
-
-	testURL = urls[0]
+func startServer(t *testing.T, f fs.Fs) {
+	opt := httplib.DefaultOpt
+	opt.ListenAddr = testBindAddress
+	opt.Template = testTemplate
+	httpServer = newServer(f, &opt)
+	assert.NoError(t, httpServer.Serve())
+	testURL = httpServer.Server.URL()
 
 	// try to connect to the test server
 	pause := time.Millisecond
@@ -66,7 +51,6 @@ func start(ctx context.Context, t *testing.T, f fs.Fs) (s *HTTP, testURL string)
 	}
 	t.Fatal("couldn't connect to server")
 
-	return s, testURL
 }
 
 var (
@@ -74,15 +58,40 @@ var (
 	expectedTime = time.Date(2000, 1, 2, 3, 4, 5, 0, time.UTC)
 )
 
+func TestInit(t *testing.T) {
+	ctx := context.Background()
+	// Configure the remote
+	config.LoadConfig(context.Background())
+	// fs.Config.LogLevel = fs.LogLevelDebug
+	// fs.Config.DumpHeaders = true
+	// fs.Config.DumpBodies = true
+
+	// exclude files called hidden.txt and directories called hidden
+	fi := filter.GetConfig(ctx)
+	require.NoError(t, fi.AddRule("- hidden.txt"))
+	require.NoError(t, fi.AddRule("- hidden/**"))
+
+	// Create a test Fs
+	f, err := fs.NewFs(context.Background(), "testdata/files")
+	require.NoError(t, err)
+
+	// set date of datedObject to expectedTime
+	obj, err := f.NewObject(context.Background(), datedObject)
+	require.NoError(t, err)
+	require.NoError(t, obj.SetModTime(context.Background(), expectedTime))
+
+	startServer(t, f)
+}
+
 // check body against the file, or re-write body if -updategolden is
 // set.
 func checkGolden(t *testing.T, fileName string, got []byte) {
 	if *updateGolden {
 		t.Logf("Updating golden file %q", fileName)
-		err := os.WriteFile(fileName, got, 0666)
+		err := ioutil.WriteFile(fileName, got, 0666)
 		require.NoError(t, err)
 	} else {
-		want, err := os.ReadFile(fileName)
+		want, err := ioutil.ReadFile(fileName)
 		require.NoError(t, err)
 		wants := strings.Split(string(want), "\n")
 		gots := strings.Split(string(got), "\n")
@@ -90,49 +99,7 @@ func checkGolden(t *testing.T, fileName string, got []byte) {
 	}
 }
 
-func testGET(t *testing.T, useProxy bool) {
-	ctx := context.Background()
-	// ci := fs.GetConfig(ctx)
-	// ci.LogLevel = fs.LogLevelDebug
-
-	// exclude files called hidden.txt and directories called hidden
-	fi := filter.GetConfig(ctx)
-	require.NoError(t, fi.AddRule("- hidden.txt"))
-	require.NoError(t, fi.AddRule("- hidden/**"))
-
-	var f fs.Fs
-	if useProxy {
-		// the backend config will be made by the proxy
-		prog, err := filepath.Abs("../servetest/proxy_code.go")
-		require.NoError(t, err)
-		files, err := filepath.Abs("testdata/files")
-		require.NoError(t, err)
-		cmd := "go run " + prog + " " + files
-
-		// FIXME this is untidy setting a global variable!
-		proxyflags.Opt.AuthProxy = cmd
-		defer func() {
-			proxyflags.Opt.AuthProxy = ""
-		}()
-
-		f = nil
-	} else {
-		// Create a test Fs
-		var err error
-		f, err = fs.NewFs(context.Background(), "testdata/files")
-		require.NoError(t, err)
-
-		// set date of datedObject to expectedTime
-		obj, err := f.NewObject(context.Background(), datedObject)
-		require.NoError(t, err)
-		require.NoError(t, obj.SetModTime(context.Background(), expectedTime))
-	}
-
-	s, testURL := start(ctx, t, f)
-	defer func() {
-		assert.NoError(t, s.server.Shutdown())
-	}()
-
+func TestGET(t *testing.T) {
 	for _, test := range []struct {
 		URL    string
 		Status int
@@ -237,11 +204,10 @@ func testGET(t *testing.T, useProxy bool) {
 		if test.Range != "" {
 			req.Header.Add("Range", test.Range)
 		}
-		req.SetBasicAuth(testUser, testPass)
 		resp, err := http.DefaultClient.Do(req)
 		require.NoError(t, err)
 		assert.Equal(t, test.Status, resp.StatusCode, test.Golden)
-		body, err := io.ReadAll(resp.Body)
+		body, err := ioutil.ReadAll(resp.Body)
 		require.NoError(t, err)
 
 		// Check we got a Last-Modified header and that it is a valid date
@@ -260,10 +226,7 @@ func testGET(t *testing.T, useProxy bool) {
 	}
 }
 
-func TestGET(t *testing.T) {
-	testGET(t, false)
-}
-
-func TestAuthProxy(t *testing.T) {
-	testGET(t, true)
+func TestFinalise(t *testing.T) {
+	httpServer.Close()
+	httpServer.Wait()
 }

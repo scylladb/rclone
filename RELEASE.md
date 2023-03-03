@@ -4,7 +4,7 @@ This file describes how to make the various kinds of releases
 
 ## Extra required software for making a release
 
-  * [gh the github cli](https://github.com/cli/cli) for uploading packages
+  * [github-release](https://github.com/aktau/github-release) for uploading packages
   * pandoc for making the html and man pages
 
 ## Making a release
@@ -34,32 +34,13 @@ This file describes how to make the various kinds of releases
   * make startdev # make startstable for stable branch
   * # announce with forum post, twitter post, patreon post
 
-## Update dependencies
-
 Early in the next release cycle update the dependencies
 
   * Review any pinned packages in go.mod and remove if possible
-  * make updatedirect
-  * make
-  * git commit -a -v
   * make update
-  * make
-  * roll back any updates which didn't compile
-  * git commit -a -v --amend
-
-Note that `make update` updates all direct and indirect dependencies
-and there can occasionally be forwards compatibility problems with
-doing that so it may be necessary to roll back dependencies to the
-version specified by `make updatedirect` in order to get rclone to
-build.
-
-## Tidy beta
-
-At some point after the release run
-
-    bin/tidy-beta v1.55
-
-where the version number is that of a couple ago to remove old beta binaries.
+  * git status
+  * git add new files
+  * git commit -a -v
 
 ## Making a point release
 
@@ -74,7 +55,8 @@ Set vars
 First make the release branch.  If this is a second point release then
 this will be done already.
 
-  * git co -b ${BASE_TAG}-stable ${BASE_TAG}.0
+  * git branch ${BASE_TAG} ${BASE_TAG}-stable
+  * git co ${BASE_TAG}-stable
   * make startstable
 
 Now
@@ -93,24 +75,6 @@ Now
 
 The rclone docker image should autobuild on via GitHub actions.  If it doesn't
 or needs to be updated then rebuild like this.
-
-See: https://github.com/ilteoood/docker_buildx/issues/19
-See: https://github.com/ilteoood/docker_buildx/blob/master/scripts/install_buildx.sh
-
-```
-git co v1.54.1
-docker pull golang
-export DOCKER_CLI_EXPERIMENTAL=enabled
-docker buildx create --name actions_builder --use
-docker run --rm --privileged docker/binfmt:820fdd95a9972a5308930a2bdfb8573dd4447ad3
-docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
-SUPPORTED_PLATFORMS=$(docker buildx inspect --bootstrap | grep 'Platforms:*.*' | cut -d : -f2,3)
-echo "Supported platforms: $SUPPORTED_PLATFORMS"
-docker buildx build --platform linux/amd64,linux/386,linux/arm64,linux/arm/v7 -t rclone/rclone:1.54.1 -t rclone/rclone:1.54 -t rclone/rclone:1 -t rclone/rclone:latest --push .
-docker buildx stop actions_builder
-```
-
-### Old build for linux/amd64 only
 
 ```
 docker pull golang

@@ -46,8 +46,7 @@ type Run struct {
 	NoBinary    bool   // set to not build a binary
 	SizeLimit   int64  // maximum test file size
 	Ignore      map[string]struct{}
-	ListRetries int     // -list-retries if > 0
-	ExtraTime   float64 // multiply the timeout by this
+	ListRetries int // -list-retries if > 0
 	// Internals
 	CmdLine     []string
 	CmdString   string
@@ -317,7 +316,7 @@ func (r *Run) RemoveTestBinary() {
 func (r *Run) Name() string {
 	ns := []string{
 		r.Backend,
-		strings.ReplaceAll(r.Path, "/", "."),
+		strings.Replace(r.Path, "/", ".", -1),
 		r.Remote,
 	}
 	if r.FastList {
@@ -325,7 +324,7 @@ func (r *Run) Name() string {
 	}
 	ns = append(ns, fmt.Sprintf("%d", r.Try))
 	s := strings.Join(ns, "-")
-	s = strings.ReplaceAll(s, ":", "")
+	s = strings.Replace(s, ":", "", -1)
 	return s
 }
 
@@ -338,11 +337,7 @@ func (r *Run) Init() {
 	} else {
 		r.CmdLine = []string{"./" + r.BinaryName()}
 	}
-	testTimeout := *timeout
-	if r.ExtraTime > 0 {
-		testTimeout = time.Duration(float64(testTimeout) * r.ExtraTime)
-	}
-	r.CmdLine = append(r.CmdLine, prefix+"v", prefix+"timeout", testTimeout.String(), "-remote", r.Remote)
+	r.CmdLine = append(r.CmdLine, prefix+"v", prefix+"timeout", timeout.String(), "-remote", r.Remote)
 	listRetries := *listRetries
 	if r.ListRetries > 0 {
 		listRetries = r.ListRetries

@@ -1,8 +1,9 @@
 package rest
 
 import (
-	"fmt"
 	"net/url"
+
+	"github.com/pkg/errors"
 )
 
 // URLJoin joins a URL and a path returning a new URL
@@ -11,7 +12,7 @@ import (
 func URLJoin(base *url.URL, path string) (*url.URL, error) {
 	rel, err := url.Parse(path)
 	if err != nil {
-		return nil, fmt.Errorf("error parsing %q as URL: %w", path, err)
+		return nil, errors.Wrapf(err, "Error parsing %q as URL", path)
 	}
 	return base.ResolveReference(rel), nil
 }

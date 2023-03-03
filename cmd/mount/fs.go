@@ -1,7 +1,6 @@
 // FUSE main Fs
 
-//go:build linux || freebsd
-// +build linux freebsd
+// +build linux,go1.13 freebsd,go1.13
 
 package mount
 
@@ -11,9 +10,9 @@ import (
 
 	"bazil.org/fuse"
 	fusefs "bazil.org/fuse/fs"
+	"github.com/pkg/errors"
 	"github.com/rclone/rclone/cmd/mountlib"
 	"github.com/rclone/rclone/fs"
-	"github.com/rclone/rclone/fs/fserrors"
 	"github.com/rclone/rclone/fs/log"
 	"github.com/rclone/rclone/vfs"
 )
@@ -21,9 +20,8 @@ import (
 // FS represents the top level filing system
 type FS struct {
 	*vfs.VFS
-	f      fs.Fs
-	opt    *mountlib.Options
-	server *fusefs.Server
+	f   fs.Fs
+	opt *mountlib.Options
 }
 
 // Check interface satisfied
@@ -77,8 +75,7 @@ func translateError(err error) error {
 	if err == nil {
 		return nil
 	}
-	_, uErr := fserrors.Cause(err)
-	switch uErr {
+	switch errors.Cause(err) {
 	case vfs.OK:
 		return nil
 	case vfs.ENOENT, fs.ErrorDirNotFound, fs.ErrorObjectNotFound:
@@ -98,10 +95,9 @@ func translateError(err error) error {
 	case vfs.EROFS:
 		return fuse.Errno(syscall.EROFS)
 	case vfs.ENOSYS, fs.ErrorNotImplemented:
-		return syscall.ENOSYS
+		return fuse.ENOSYS
 	case vfs.EINVAL:
 		return fuse.Errno(syscall.EINVAL)
 	}
-	fs.Errorf(nil, "IO error: %v", err)
 	return err
 }

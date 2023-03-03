@@ -2,45 +2,49 @@
 #
 # Upload a release
 #
-# Needs the gh tool from https://github.com/cli/cli
+# Needs github-release from https://github.com/aktau/github-release
 
 set -e
 
-REPO="rclone/rclone"
+REPO="rclone"
 
 if [ "$1" == "" ]; then
     echo "Syntax: $0 Version"
     exit 1
 fi
 VERSION="$1"
-ANCHOR=$(grep '^## v' docs/content/changelog.md | head -1 | sed 's/^## //; s/[^A-Za-z0-9-]/-/g; s/--*/-/g')
+if [ "$GITHUB_USER" == "" ]; then
+   echo 1>&2 "Need GITHUB_USER environment variable"
+   exit 1
+fi
+if [ "$GITHUB_TOKEN" == "" ]; then
+   echo 1>&2 "Need GITHUB_TOKEN environment variable"
+   exit 1
+fi
 
-cat > "/tmp/${VERSION}-release-notes" <<EOF
-This is the ${VERSION} release of rclone.
-
-Full details of the changes can be found in [the changelog](https://rclone.org/changelog/#${ANCHOR}).
-EOF
-
-echo "Making release ${VERSION} anchor ${ANCHOR} to repo ${REPO}"
-
-gh release create "${VERSION}" \
+echo "Making release ${VERSION}"
+github-release release \
     --repo ${REPO} \
-    --title "rclone ${VERSION}" \
-    --notes-file "/tmp/${VERSION}-release-notes"
+    --tag ${VERSION} \
+    --name "rclone" \
+    --description "Rclone - rsync for cloud storage. Sync files to and from many cloud storage providers."
 
-for build in build/*; do
-    case $build in
-        *current*) continue ;;
-        *testbuilds*) continue ;;
-    esac
-    echo "Uploading ${build} "
-    gh release upload "${VERSION}" \
-        --clobber \
+for build in `ls build | grep -v current | grep -v testbuilds`; do
+    echo "Uploading ${build}"
+    base="${build%.*}"
+    parts=(${base//-/ })
+    os=${parts[3]}
+    arch=${parts[4]}
+
+    github-release upload \
         --repo ${REPO} \
-        "${build}"
+        --tag ${VERSION} \
+        --name "${build}" \
+        --file build/${build}
 done
 
-gh release view "${VERSION}" \
-    --repo ${REPO}
+github-release info \
+    --repo ${REPO} \
+    --tag ${VERSION}
 
 echo "Done"

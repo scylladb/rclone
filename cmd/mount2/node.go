@@ -1,4 +1,3 @@
-//go:build linux || (darwin && amd64)
 // +build linux darwin,amd64
 
 package mount2

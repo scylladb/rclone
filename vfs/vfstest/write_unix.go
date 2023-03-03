@@ -1,4 +1,3 @@
-//go:build linux || darwin || freebsd
 // +build linux darwin freebsd
 
 package vfstest
@@ -46,7 +45,7 @@ func TestWriteFileDoubleClose(t *testing.T) {
 
 	// write to the other dup
 	_, err = unix.Write(fd2, buf)
-	if run.vfsOpt.CacheMode < vfscommon.CacheModeWrites {
+	if run.vfs.Opt.CacheMode < vfscommon.CacheModeWrites {
 		// produces an error if cache mode < writes
 		assert.Error(t, err, "input/output error")
 	} else {

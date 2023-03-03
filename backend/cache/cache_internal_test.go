@@ -1,5 +1,5 @@
-//go:build !plan9 && !js && !race
-// +build !plan9,!js,!race
+// +build !plan9,!js
+// +build !race
 
 package cache_test
 
@@ -7,21 +7,21 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"errors"
 	goflag "flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"math/rand"
 	"os"
 	"path"
 	"path/filepath"
-	"runtime"
 	"runtime/debug"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/rclone/rclone/backend/cache"
 	"github.com/rclone/rclone/backend/crypt"
 	_ "github.com/rclone/rclone/backend/drive"
@@ -101,12 +101,14 @@ func TestMain(m *testing.M) {
 
 func TestInternalListRootAndInnerRemotes(t *testing.T) {
 	id := fmt.Sprintf("tilrair%v", time.Now().Unix())
-	rootFs, _ := runInstance.newCacheFs(t, remoteName, id, true, true, nil)
+	rootFs, boltDb := runInstance.newCacheFs(t, remoteName, id, true, true, nil, nil)
+	defer runInstance.cleanupFs(t, rootFs, boltDb)
 
 	// Instantiate inner fs
 	innerFolder := "inner"
 	runInstance.mkdir(t, rootFs, innerFolder)
-	rootFs2, _ := runInstance.newCacheFs(t, remoteName, id+"/"+innerFolder, true, true, nil)
+	rootFs2, boltDb2 := runInstance.newCacheFs(t, remoteName, id+"/"+innerFolder, true, true, nil, nil)
+	defer runInstance.cleanupFs(t, rootFs2, boltDb2)
 
 	runInstance.writeObjectString(t, rootFs2, "one", "content")
 	listRoot, err := runInstance.list(t, rootFs, "")
@@ -164,7 +166,7 @@ func TestInternalVfsCache(t *testing.T) {
 			li2 := [2]string{path.Join("test", "one"), path.Join("test", "second")}
 			for _, r := range li2 {
 				var err error
-				ci, err := os.ReadDir(path.Join(runInstance.chunkPath, runInstance.encryptRemoteIfNeeded(t, path.Join(id, r))))
+				ci, err := ioutil.ReadDir(path.Join(runInstance.chunkPath, runInstance.encryptRemoteIfNeeded(t, path.Join(id, r))))
 				if err != nil || len(ci) == 0 {
 					log.Printf("========== '%v' not in cache", r)
 				} else {
@@ -223,7 +225,8 @@ func TestInternalVfsCache(t *testing.T) {
 
 func TestInternalObjWrapFsFound(t *testing.T) {
 	id := fmt.Sprintf("tiowff%v", time.Now().Unix())
-	rootFs, _ := runInstance.newCacheFs(t, remoteName, id, true, true, nil)
+	rootFs, boltDb := runInstance.newCacheFs(t, remoteName, id, true, true, nil, nil)
+	defer runInstance.cleanupFs(t, rootFs, boltDb)
 
 	cfs, err := runInstance.getCacheFs(rootFs)
 	require.NoError(t, err)
@@ -255,7 +258,8 @@ func TestInternalObjWrapFsFound(t *testing.T) {
 
 func TestInternalObjNotFound(t *testing.T) {
 	id := fmt.Sprintf("tionf%v", time.Now().Unix())
-	rootFs, _ := runInstance.newCacheFs(t, remoteName, id, false, true, nil)
+	rootFs, boltDb := runInstance.newCacheFs(t, remoteName, id, false, true, nil, nil)
+	defer runInstance.cleanupFs(t, rootFs, boltDb)
 
 	obj, err := rootFs.NewObject(context.Background(), "404")
 	require.Error(t, err)
@@ -265,7 +269,8 @@ func TestInternalObjNotFound(t *testing.T) {
 func TestInternalCachedWrittenContentMatches(t *testing.T) {
 	testy.SkipUnreliable(t)
 	id := fmt.Sprintf("ticwcm%v", time.Now().Unix())
-	rootFs, _ := runInstance.newCacheFs(t, remoteName, id, false, true, nil)
+	rootFs, boltDb := runInstance.newCacheFs(t, remoteName, id, false, true, nil, nil)
+	defer runInstance.cleanupFs(t, rootFs, boltDb)
 
 	cfs, err := runInstance.getCacheFs(rootFs)
 	require.NoError(t, err)
@@ -288,11 +293,9 @@ func TestInternalCachedWrittenContentMatches(t *testing.T) {
 }
 
 func TestInternalDoubleWrittenContentMatches(t *testing.T) {
-	if runtime.GOOS == "windows" && runtime.GOARCH == "386" {
-		t.Skip("Skip test on windows/386")
-	}
 	id := fmt.Sprintf("tidwcm%v", time.Now().Unix())
-	rootFs, _ := runInstance.newCacheFs(t, remoteName, id, false, true, nil)
+	rootFs, boltDb := runInstance.newCacheFs(t, remoteName, id, false, true, nil, nil)
+	defer runInstance.cleanupFs(t, rootFs, boltDb)
 
 	// write the object
 	runInstance.writeRemoteString(t, rootFs, "one", "one content")
@@ -310,7 +313,8 @@ func TestInternalDoubleWrittenContentMatches(t *testing.T) {
 func TestInternalCachedUpdatedContentMatches(t *testing.T) {
 	testy.SkipUnreliable(t)
 	id := fmt.Sprintf("ticucm%v", time.Now().Unix())
-	rootFs, _ := runInstance.newCacheFs(t, remoteName, id, false, true, nil)
+	rootFs, boltDb := runInstance.newCacheFs(t, remoteName, id, false, true, nil, nil)
+	defer runInstance.cleanupFs(t, rootFs, boltDb)
 	var err error
 
 	// create some rand test data
@@ -339,7 +343,8 @@ func TestInternalCachedUpdatedContentMatches(t *testing.T) {
 func TestInternalWrappedWrittenContentMatches(t *testing.T) {
 	id := fmt.Sprintf("tiwwcm%v", time.Now().Unix())
 	vfsflags.Opt.DirCacheTime = time.Second
-	rootFs, _ := runInstance.newCacheFs(t, remoteName, id, true, true, nil)
+	rootFs, boltDb := runInstance.newCacheFs(t, remoteName, id, true, true, nil, nil)
+	defer runInstance.cleanupFs(t, rootFs, boltDb)
 	if runInstance.rootIsCrypt {
 		t.Skip("test skipped with crypt remote")
 	}
@@ -369,7 +374,8 @@ func TestInternalWrappedWrittenContentMatches(t *testing.T) {
 func TestInternalLargeWrittenContentMatches(t *testing.T) {
 	id := fmt.Sprintf("tilwcm%v", time.Now().Unix())
 	vfsflags.Opt.DirCacheTime = time.Second
-	rootFs, _ := runInstance.newCacheFs(t, remoteName, id, true, true, nil)
+	rootFs, boltDb := runInstance.newCacheFs(t, remoteName, id, true, true, nil, nil)
+	defer runInstance.cleanupFs(t, rootFs, boltDb)
 	if runInstance.rootIsCrypt {
 		t.Skip("test skipped with crypt remote")
 	}
@@ -395,7 +401,8 @@ func TestInternalLargeWrittenContentMatches(t *testing.T) {
 
 func TestInternalWrappedFsChangeNotSeen(t *testing.T) {
 	id := fmt.Sprintf("tiwfcns%v", time.Now().Unix())
-	rootFs, _ := runInstance.newCacheFs(t, remoteName, id, false, true, nil)
+	rootFs, boltDb := runInstance.newCacheFs(t, remoteName, id, false, true, nil, nil)
+	defer runInstance.cleanupFs(t, rootFs, boltDb)
 
 	cfs, err := runInstance.getCacheFs(rootFs)
 	require.NoError(t, err)
@@ -435,7 +442,7 @@ func TestInternalWrappedFsChangeNotSeen(t *testing.T) {
 				return err
 			}
 			if coSize != expectedSize {
-				return fmt.Errorf("%v <> %v", coSize, expectedSize)
+				return errors.Errorf("%v <> %v", coSize, expectedSize)
 			}
 			return nil
 		}, 12, time.Second*10)
@@ -449,7 +456,8 @@ func TestInternalWrappedFsChangeNotSeen(t *testing.T) {
 
 func TestInternalMoveWithNotify(t *testing.T) {
 	id := fmt.Sprintf("timwn%v", time.Now().Unix())
-	rootFs, _ := runInstance.newCacheFs(t, remoteName, id, false, true, nil)
+	rootFs, boltDb := runInstance.newCacheFs(t, remoteName, id, false, true, nil, nil)
+	defer runInstance.cleanupFs(t, rootFs, boltDb)
 	if !runInstance.wrappedIsExternal {
 		t.Skipf("Not external")
 	}
@@ -490,7 +498,7 @@ func TestInternalMoveWithNotify(t *testing.T) {
 		}
 		if len(li) != 2 {
 			log.Printf("not expected listing /test: %v", li)
-			return fmt.Errorf("not expected listing /test: %v", li)
+			return errors.Errorf("not expected listing /test: %v", li)
 		}
 
 		li, err = runInstance.list(t, rootFs, "test/one")
@@ -500,7 +508,7 @@ func TestInternalMoveWithNotify(t *testing.T) {
 		}
 		if len(li) != 0 {
 			log.Printf("not expected listing /test/one: %v", li)
-			return fmt.Errorf("not expected listing /test/one: %v", li)
+			return errors.Errorf("not expected listing /test/one: %v", li)
 		}
 
 		li, err = runInstance.list(t, rootFs, "test/second")
@@ -510,21 +518,21 @@ func TestInternalMoveWithNotify(t *testing.T) {
 		}
 		if len(li) != 1 {
 			log.Printf("not expected listing /test/second: %v", li)
-			return fmt.Errorf("not expected listing /test/second: %v", li)
+			return errors.Errorf("not expected listing /test/second: %v", li)
 		}
 		if fi, ok := li[0].(os.FileInfo); ok {
 			if fi.Name() != "data.bin" {
 				log.Printf("not expected name: %v", fi.Name())
-				return fmt.Errorf("not expected name: %v", fi.Name())
+				return errors.Errorf("not expected name: %v", fi.Name())
 			}
 		} else if di, ok := li[0].(fs.DirEntry); ok {
 			if di.Remote() != "test/second/data.bin" {
 				log.Printf("not expected remote: %v", di.Remote())
-				return fmt.Errorf("not expected remote: %v", di.Remote())
+				return errors.Errorf("not expected remote: %v", di.Remote())
 			}
 		} else {
 			log.Printf("unexpected listing: %v", li)
-			return fmt.Errorf("unexpected listing: %v", li)
+			return errors.Errorf("unexpected listing: %v", li)
 		}
 
 		log.Printf("complete listing: %v", li)
@@ -535,7 +543,8 @@ func TestInternalMoveWithNotify(t *testing.T) {
 
 func TestInternalNotifyCreatesEmptyParts(t *testing.T) {
 	id := fmt.Sprintf("tincep%v", time.Now().Unix())
-	rootFs, boltDb := runInstance.newCacheFs(t, remoteName, id, false, true, nil)
+	rootFs, boltDb := runInstance.newCacheFs(t, remoteName, id, false, true, nil, nil)
+	defer runInstance.cleanupFs(t, rootFs, boltDb)
 	if !runInstance.wrappedIsExternal {
 		t.Skipf("Not external")
 	}
@@ -578,17 +587,17 @@ func TestInternalNotifyCreatesEmptyParts(t *testing.T) {
 		found = boltDb.HasEntry(path.Join(cfs.Root(), runInstance.encryptRemoteIfNeeded(t, "test")))
 		if !found {
 			log.Printf("not found /test")
-			return fmt.Errorf("not found /test")
+			return errors.Errorf("not found /test")
 		}
 		found = boltDb.HasEntry(path.Join(cfs.Root(), runInstance.encryptRemoteIfNeeded(t, "test"), runInstance.encryptRemoteIfNeeded(t, "one")))
 		if !found {
 			log.Printf("not found /test/one")
-			return fmt.Errorf("not found /test/one")
+			return errors.Errorf("not found /test/one")
 		}
 		found = boltDb.HasEntry(path.Join(cfs.Root(), runInstance.encryptRemoteIfNeeded(t, "test"), runInstance.encryptRemoteIfNeeded(t, "one"), runInstance.encryptRemoteIfNeeded(t, "test2")))
 		if !found {
 			log.Printf("not found /test/one/test2")
-			return fmt.Errorf("not found /test/one/test2")
+			return errors.Errorf("not found /test/one/test2")
 		}
 		li, err := runInstance.list(t, rootFs, "test/one")
 		if err != nil {
@@ -597,21 +606,21 @@ func TestInternalNotifyCreatesEmptyParts(t *testing.T) {
 		}
 		if len(li) != 1 {
 			log.Printf("not expected listing /test/one: %v", li)
-			return fmt.Errorf("not expected listing /test/one: %v", li)
+			return errors.Errorf("not expected listing /test/one: %v", li)
 		}
 		if fi, ok := li[0].(os.FileInfo); ok {
 			if fi.Name() != "test2" {
 				log.Printf("not expected name: %v", fi.Name())
-				return fmt.Errorf("not expected name: %v", fi.Name())
+				return errors.Errorf("not expected name: %v", fi.Name())
 			}
 		} else if di, ok := li[0].(fs.DirEntry); ok {
 			if di.Remote() != "test/one/test2" {
 				log.Printf("not expected remote: %v", di.Remote())
-				return fmt.Errorf("not expected remote: %v", di.Remote())
+				return errors.Errorf("not expected remote: %v", di.Remote())
 			}
 		} else {
 			log.Printf("unexpected listing: %v", li)
-			return fmt.Errorf("unexpected listing: %v", li)
+			return errors.Errorf("unexpected listing: %v", li)
 		}
 		log.Printf("complete listing /test/one/test2")
 		return nil
@@ -621,7 +630,8 @@ func TestInternalNotifyCreatesEmptyParts(t *testing.T) {
 
 func TestInternalChangeSeenAfterDirCacheFlush(t *testing.T) {
 	id := fmt.Sprintf("ticsadcf%v", time.Now().Unix())
-	rootFs, _ := runInstance.newCacheFs(t, remoteName, id, false, true, nil)
+	rootFs, boltDb := runInstance.newCacheFs(t, remoteName, id, false, true, nil, nil)
+	defer runInstance.cleanupFs(t, rootFs, boltDb)
 
 	cfs, err := runInstance.getCacheFs(rootFs)
 	require.NoError(t, err)
@@ -653,7 +663,8 @@ func TestInternalChangeSeenAfterDirCacheFlush(t *testing.T) {
 
 func TestInternalCacheWrites(t *testing.T) {
 	id := "ticw"
-	rootFs, boltDb := runInstance.newCacheFs(t, remoteName, id, false, true, map[string]string{"writes": "true"})
+	rootFs, boltDb := runInstance.newCacheFs(t, remoteName, id, false, true, nil, map[string]string{"writes": "true"})
+	defer runInstance.cleanupFs(t, rootFs, boltDb)
 
 	cfs, err := runInstance.getCacheFs(rootFs)
 	require.NoError(t, err)
@@ -670,11 +681,9 @@ func TestInternalCacheWrites(t *testing.T) {
 }
 
 func TestInternalMaxChunkSizeRespected(t *testing.T) {
-	if runtime.GOOS == "windows" && runtime.GOARCH == "386" {
-		t.Skip("Skip test on windows/386")
-	}
 	id := fmt.Sprintf("timcsr%v", time.Now().Unix())
-	rootFs, boltDb := runInstance.newCacheFs(t, remoteName, id, false, true, map[string]string{"workers": "1"})
+	rootFs, boltDb := runInstance.newCacheFs(t, remoteName, id, false, true, nil, map[string]string{"workers": "1"})
+	defer runInstance.cleanupFs(t, rootFs, boltDb)
 
 	cfs, err := runInstance.getCacheFs(rootFs)
 	require.NoError(t, err)
@@ -709,7 +718,8 @@ func TestInternalMaxChunkSizeRespected(t *testing.T) {
 func TestInternalExpiredEntriesRemoved(t *testing.T) {
 	id := fmt.Sprintf("tieer%v", time.Now().Unix())
 	vfsflags.Opt.DirCacheTime = time.Second * 4 // needs to be lower than the defined
-	rootFs, _ := runInstance.newCacheFs(t, remoteName, id, true, true, nil)
+	rootFs, boltDb := runInstance.newCacheFs(t, remoteName, id, true, true, map[string]string{"info_age": "5s"}, nil)
+	defer runInstance.cleanupFs(t, rootFs, boltDb)
 	cfs, err := runInstance.getCacheFs(rootFs)
 	require.NoError(t, err)
 
@@ -746,7 +756,9 @@ func TestInternalBug2117(t *testing.T) {
 	vfsflags.Opt.DirCacheTime = time.Second * 10
 
 	id := fmt.Sprintf("tib2117%v", time.Now().Unix())
-	rootFs, _ := runInstance.newCacheFs(t, remoteName, id, false, true, map[string]string{"info_age": "72h", "chunk_clean_interval": "15m"})
+	rootFs, boltDb := runInstance.newCacheFs(t, remoteName, id, false, true, nil,
+		map[string]string{"info_age": "72h", "chunk_clean_interval": "15m"})
+	defer runInstance.cleanupFs(t, rootFs, boltDb)
 
 	if runInstance.rootIsCrypt {
 		t.Skipf("skipping crypt")
@@ -822,9 +834,9 @@ func newRun() *run {
 	}
 
 	if uploadDir == "" {
-		r.tmpUploadDir, err = os.MkdirTemp("", "rclonecache-tmp")
+		r.tmpUploadDir, err = ioutil.TempDir("", "rclonecache-tmp")
 		if err != nil {
-			panic(fmt.Sprintf("Failed to create temp dir: %v", err))
+			log.Fatalf("Failed to create temp dir: %v", err)
 		}
 	} else {
 		r.tmpUploadDir = uploadDir
@@ -847,7 +859,7 @@ func (r *run) encryptRemoteIfNeeded(t *testing.T, remote string) string {
 	return enc
 }
 
-func (r *run) newCacheFs(t *testing.T, remote, id string, needRemote, purge bool, flags map[string]string) (fs.Fs, *cache.Persistent) {
+func (r *run) newCacheFs(t *testing.T, remote, id string, needRemote, purge bool, cfg map[string]string, flags map[string]string) (fs.Fs, *cache.Persistent) {
 	fstest.Initialise()
 	remoteExists := false
 	for _, s := range config.FileSections() {
@@ -880,7 +892,7 @@ func (r *run) newCacheFs(t *testing.T, remote, id string, needRemote, purge bool
 		m.Set("type", "cache")
 		m.Set("remote", localRemote+":"+filepath.Join(os.TempDir(), localRemote))
 	} else {
-		remoteType := config.FileGet(remote, "type")
+		remoteType := config.FileGet(remote, "type", "")
 		if remoteType == "" {
 			t.Skipf("skipped due to invalid remote type for %v", remote)
 			return nil, nil
@@ -891,14 +903,14 @@ func (r *run) newCacheFs(t *testing.T, remote, id string, needRemote, purge bool
 				m.Set("password", cryptPassword1)
 				m.Set("password2", cryptPassword2)
 			}
-			remoteRemote := config.FileGet(remote, "remote")
+			remoteRemote := config.FileGet(remote, "remote", "")
 			if remoteRemote == "" {
 				t.Skipf("skipped due to invalid remote wrapper for %v", remote)
 				return nil, nil
 			}
 			remoteRemoteParts := strings.Split(remoteRemote, ":")
 			remoteWrapping := remoteRemoteParts[0]
-			remoteType := config.FileGet(remoteWrapping, "type")
+			remoteType := config.FileGet(remoteWrapping, "type", "")
 			if remoteType != "cache" {
 				t.Skipf("skipped due to invalid remote type for %v: '%v'", remoteWrapping, remoteType)
 				return nil, nil
@@ -907,9 +919,9 @@ func (r *run) newCacheFs(t *testing.T, remote, id string, needRemote, purge bool
 		}
 	}
 	runInstance.rootIsCrypt = rootIsCrypt
-	runInstance.dbPath = filepath.Join(config.GetCacheDir(), "cache-backend", cacheRemote+".db")
-	runInstance.chunkPath = filepath.Join(config.GetCacheDir(), "cache-backend", cacheRemote)
-	runInstance.vfsCachePath = filepath.Join(config.GetCacheDir(), "vfs", remote)
+	runInstance.dbPath = filepath.Join(config.CacheDir, "cache-backend", cacheRemote+".db")
+	runInstance.chunkPath = filepath.Join(config.CacheDir, "cache-backend", cacheRemote)
+	runInstance.vfsCachePath = filepath.Join(config.CacheDir, "vfs", remote)
 	boltDb, err := cache.GetPersistent(runInstance.dbPath, runInstance.chunkPath, &cache.Features{PurgeDb: true})
 	require.NoError(t, err)
 
@@ -940,15 +952,10 @@ func (r *run) newCacheFs(t *testing.T, remote, id string, needRemote, purge bool
 	}
 	err = f.Mkdir(context.Background(), "")
 	require.NoError(t, err)
-
-	t.Cleanup(func() {
-		runInstance.cleanupFs(t, f)
-	})
-
 	return f, boltDb
 }
 
-func (r *run) cleanupFs(t *testing.T, f fs.Fs) {
+func (r *run) cleanupFs(t *testing.T, f fs.Fs, b *cache.Persistent) {
 	err := f.Features().Purge(context.Background(), "")
 	require.NoError(t, err)
 	cfs, err := r.getCacheFs(f)
@@ -970,7 +977,7 @@ func (r *run) randomReader(t *testing.T, size int64) io.ReadCloser {
 	chunk := int64(1024)
 	cnt := size / chunk
 	left := size % chunk
-	f, err := os.CreateTemp("", "rclonecache-tempfile")
+	f, err := ioutil.TempFile("", "rclonecache-tempfile")
 	require.NoError(t, err)
 
 	for i := 0; i < int(cnt); i++ {
@@ -1027,7 +1034,7 @@ func (r *run) updateObjectRemote(t *testing.T, f fs.Fs, remote string, data1 []b
 	objInfo1 := object.NewStaticObjectInfo(remote, time.Now(), int64(len(data1)), true, nil, f)
 	objInfo2 := object.NewStaticObjectInfo(remote, time.Now(), int64(len(data2)), true, nil, f)
 
-	_, err = f.Put(context.Background(), in1, objInfo1)
+	obj, err = f.Put(context.Background(), in1, objInfo1)
 	require.NoError(t, err)
 	obj, err = f.NewObject(context.Background(), remote)
 	require.NoError(t, err)
@@ -1048,7 +1055,7 @@ func (r *run) readDataFromRemote(t *testing.T, f fs.Fs, remote string, offset, e
 	checkSample = r.readDataFromObj(t, co, offset, end, noLengthCheck)
 
 	if !noLengthCheck && size != int64(len(checkSample)) {
-		return checkSample, fmt.Errorf("read size doesn't match expected: %v <> %v", len(checkSample), size)
+		return checkSample, errors.Errorf("read size doesn't match expected: %v <> %v", len(checkSample), size)
 	}
 	return checkSample, nil
 }
@@ -1243,7 +1250,7 @@ func (r *run) listenForBackgroundUpload(t *testing.T, f fs.Fs, remote string) ch
 			case state = <-buCh:
 				// continue
 			case <-time.After(maxDuration):
-				waitCh <- fmt.Errorf("Timed out waiting for background upload: %v", remote)
+				waitCh <- errors.Errorf("Timed out waiting for background upload: %v", remote)
 				return
 			}
 			checkRemote := state.Remote
@@ -1260,7 +1267,7 @@ func (r *run) listenForBackgroundUpload(t *testing.T, f fs.Fs, remote string) ch
 				return
 			}
 		}
-		waitCh <- fmt.Errorf("Too many attempts to wait for the background upload: %v", remote)
+		waitCh <- errors.Errorf("Too many attempts to wait for the background upload: %v", remote)
 	}()
 	return waitCh
 }

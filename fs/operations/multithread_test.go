@@ -106,6 +106,7 @@ func TestMultithreadCalculateChunks(t *testing.T) {
 
 func TestMultithreadCopy(t *testing.T) {
 	r := fstest.NewRun(t)
+	defer r.Finalise()
 	ctx := context.Background()
 
 	for _, test := range []struct {
@@ -124,8 +125,8 @@ func TestMultithreadCopy(t *testing.T) {
 			contents := random.String(test.size)
 			t1 := fstest.Time("2001-02-03T04:05:06.499999999Z")
 			file1 := r.WriteObject(ctx, "file1", contents, t1)
-			r.CheckRemoteItems(t, file1)
-			r.CheckLocalItems(t)
+			fstest.CheckItems(t, r.Fremote, file1)
+			fstest.CheckItems(t, r.Flocal)
 
 			src, err := r.Fremote.NewObject(ctx, "file1")
 			require.NoError(t, err)

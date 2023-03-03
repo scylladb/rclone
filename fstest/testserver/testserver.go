@@ -3,7 +3,6 @@ package testserver
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -14,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/fspath"
 )
@@ -52,7 +52,7 @@ func run(name, command string) (out []byte, err error) {
 	cmd := exec.Command(cmdPath, command)
 	out, err = cmd.CombinedOutput()
 	if err != nil {
-		err = fmt.Errorf("failed to run %s %s\n%s: %w", cmdPath, command, string(out), err)
+		err = errors.Wrapf(err, "failed to run %s %s\n%s", cmdPath, command, string(out))
 	}
 	return out, err
 }
@@ -91,7 +91,7 @@ func start(name string) error {
 				continue
 			}
 
-			// fs.Debugf(name, "key = %q, envKey = %q, value = %q", key, envKey(name, string(key)), value)
+			// fs.Debugf(name, "key = %q, envKey = %q, value = %q", key, envKey, value)
 			err = os.Setenv(envKey(name, string(key)), string(value))
 			if err != nil {
 				return err
@@ -112,7 +112,7 @@ func start(name string) error {
 		}
 		time.Sleep(time.Second)
 	}
-	return fmt.Errorf("failed to connect to %q on %q", name, connect)
+	return errors.Errorf("failed to connect to %q on %q", name, connect)
 }
 
 // Start starts the named test server which can be stopped by the
@@ -122,11 +122,11 @@ func Start(remoteName string) (fn func(), err error) {
 		// don't start the local backend
 		return func() {}, nil
 	}
-	parsed, err := fspath.Parse(remoteName)
+	var name string
+	name, _, err = fspath.Parse(remoteName)
 	if err != nil {
 		return nil, err
 	}
-	name := parsed.ConfigString
 	if name == "" {
 		// don't start the local backend
 		return func() {}, nil

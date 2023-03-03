@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/pkg/errors"
 	"github.com/rclone/rclone/backend/sharefile/api"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/accounting"
@@ -54,7 +55,7 @@ func (f *Fs) newLargeUpload(ctx context.Context, o *Object, in io.Reader, src fs
 	case "threaded":
 		streamed = false
 	default:
-		return nil, fmt.Errorf("can't use method %q with newLargeUpload", info.Method)
+		return nil, errors.Errorf("can't use method %q with newLargeUpload", info.Method)
 	}
 
 	threads := f.ci.Transfers
@@ -86,7 +87,7 @@ func (up *largeUpload) parseUploadFinishResponse(respBody []byte) (err error) {
 	err = json.Unmarshal(respBody, &finish)
 	if err != nil {
 		// Sometimes the unmarshal fails in which case return the body
-		return fmt.Errorf("upload: bad response: %q", bytes.TrimSpace(respBody))
+		return errors.Errorf("upload: bad response: %q", bytes.TrimSpace(respBody))
 	}
 	return up.o.checkUploadResponse(up.ctx, &finish)
 }
@@ -154,7 +155,7 @@ func (up *largeUpload) finish(ctx context.Context) error {
 	err := up.f.pacer.Call(func() (bool, error) {
 		resp, err := up.f.srv.Call(ctx, &opts)
 		if err != nil {
-			return shouldRetry(ctx, resp, err)
+			return shouldRetry(resp, err)
 		}
 		respBody, err = rest.ReadBody(resp)
 		// retry all errors now that the multipart upload has started
@@ -239,7 +240,7 @@ outer:
 
 	// check size read is correct
 	if eof && err == nil && up.size >= 0 && up.size != offset {
-		err = fmt.Errorf("upload: short read: read %d bytes expected %d", up.size, offset)
+		err = errors.Errorf("upload: short read: read %d bytes expected %d", up.size, offset)
 	}
 
 	// read any errors

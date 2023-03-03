@@ -1,12 +1,13 @@
-// Package webgui defines the Web GUI helpers.
+// Define the Web GUI helpers
+
 package webgui
 
 import (
 	"archive/zip"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -14,23 +15,23 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/rclone/rclone/fs"
-	"github.com/rclone/rclone/lib/file"
 )
 
 // GetLatestReleaseURL returns the latest release details of the rclone-webui-react
 func GetLatestReleaseURL(fetchURL string) (string, string, int, error) {
 	resp, err := http.Get(fetchURL)
 	if err != nil {
-		return "", "", 0, fmt.Errorf("failed getting latest release of rclone-webui: %w", err)
+		return "", "", 0, errors.Wrap(err, "failed getting latest release of rclone-webui")
 	}
 	defer fs.CheckClose(resp.Body, &err)
 	if resp.StatusCode != http.StatusOK {
-		return "", "", 0, fmt.Errorf("bad HTTP status %d (%s) when fetching %s", resp.StatusCode, resp.Status, fetchURL)
+		return "", "", 0, errors.Errorf("bad HTTP status %d (%s) when fetching %s", resp.StatusCode, resp.Status, fetchURL)
 	}
 	results := gitHubRequest{}
 	if err := json.NewDecoder(resp.Body).Decode(&results); err != nil {
-		return "", "", 0, fmt.Errorf("could not decode results from http request: %w", err)
+		return "", "", 0, errors.Wrap(err, "could not decode results from http request")
 	}
 	if len(results.Assets) < 1 {
 		return "", "", 0, errors.New("could not find an asset in the release. " +
@@ -61,9 +62,9 @@ func CheckAndDownloadWebGUIRelease(checkUpdate bool, forceUpdate bool, fetchURL 
 	// Get the latest release details
 	WebUIURL, tag, size, err := GetLatestReleaseURL(fetchURL)
 	if err != nil {
-		return fmt.Errorf("error checking for web gui release update, skipping update: %w", err)
+		return errors.Wrap(err, "Error checking for web gui release update, skipping update")
 	}
-	dat, err := os.ReadFile(tagPath)
+	dat, err := ioutil.ReadFile(tagPath)
 	tagsMatch := false
 	if err != nil {
 		fs.Errorf(nil, "Error reading tag file at %s ", tagPath)
@@ -94,7 +95,7 @@ func CheckAndDownloadWebGUIRelease(checkUpdate bool, forceUpdate bool, fetchURL 
 
 		cachePathExist, cachePathStat, _ := exists(cachePath)
 		if !cachePathExist {
-			if err := file.MkdirAll(cachePath, 0755); err != nil {
+			if err := os.MkdirAll(cachePath, 0755); err != nil {
 				return errors.New("Error creating cache directory: " + cachePath)
 			}
 		}
@@ -128,7 +129,7 @@ func CheckAndDownloadWebGUIRelease(checkUpdate bool, forceUpdate bool, fetchURL 
 			fs.Logf(nil, "Downloaded ZIP cannot be deleted")
 		}
 
-		err = os.WriteFile(tagPath, []byte(tag), 0644)
+		err = ioutil.WriteFile(tagPath, []byte(tag), 0644)
 		if err != nil {
 			fs.Infof(nil, "Cannot write tag file. You may be required to redownload the binary next time.")
 		}
@@ -148,7 +149,7 @@ func DownloadFile(filepath string, url string) (err error) {
 	}
 	defer fs.CheckClose(resp.Body, &err)
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("bad HTTP status %d (%s) when fetching %s", resp.StatusCode, resp.Status, url)
+		return errors.Errorf("bad HTTP status %d (%s) when fetching %s", resp.StatusCode, resp.Status, url)
 	}
 
 	// Create the file
@@ -173,7 +174,7 @@ func Unzip(src, dest string) (err error) {
 	}
 	defer fs.CheckClose(r, &err)
 
-	if err := file.MkdirAll(dest, 0755); err != nil {
+	if err := os.MkdirAll(dest, 0755); err != nil {
 		return err
 	}
 
@@ -192,14 +193,14 @@ func Unzip(src, dest string) (err error) {
 		defer fs.CheckClose(rc, &err)
 
 		if f.FileInfo().IsDir() {
-			if err := file.MkdirAll(path, 0755); err != nil {
+			if err := os.MkdirAll(path, 0755); err != nil {
 				return err
 			}
 		} else {
-			if err := file.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 				return err
 			}
-			f, err := file.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+			f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 			if err != nil {
 				return err
 			}
@@ -238,7 +239,7 @@ func exists(path string) (existence bool, stat os.FileInfo, err error) {
 func CreatePathIfNotExist(path string) (err error) {
 	exists, stat, _ := exists(path)
 	if !exists {
-		if err := file.MkdirAll(path, 0755); err != nil {
+		if err := os.MkdirAll(path, 0755); err != nil {
 			return errors.New("Error creating : " + path)
 		}
 	}

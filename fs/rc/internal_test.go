@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"runtime"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -22,12 +21,6 @@ func TestMain(m *testing.M) {
 	if os.Args[len(os.Args)-1] == "version" {
 		fmt.Printf("rclone %s\n", fs.Version)
 		os.Exit(0)
-	}
-	// Pretend to error if we have an unknown command
-	if os.Args[len(os.Args)-1] == "unknown_command" {
-		fmt.Printf("rclone %s\n", fs.Version)
-		fmt.Fprintf(os.Stderr, "Unknown command\n")
-		os.Exit(1)
 	}
 	os.Exit(m.Run())
 }
@@ -143,56 +136,17 @@ func TestCoreQuit(t *testing.T) {
 func TestCoreCommand(t *testing.T) {
 	call := Calls.Get("core/command")
 
-	test := func(command string, returnType string, wantOutput string, fail bool) {
-		var rec = httptest.NewRecorder()
-		var w http.ResponseWriter = rec
+	var httpResponse http.ResponseWriter = httptest.NewRecorder()
 
-		in := Params{
-			"command":   command,
-			"opt":       map[string]string{},
-			"arg":       []string{},
-			"_response": w,
-		}
-		if returnType != "" {
-			in["returnType"] = returnType
-		} else {
-			returnType = "COMBINED_OUTPUT"
-		}
-		stream := strings.HasPrefix(returnType, "STREAM")
-		got, err := call.Fn(context.Background(), in)
-		if stream && fail {
-			assert.Error(t, err)
-		} else {
-			assert.NoError(t, err)
-		}
-
-		if !stream {
-			assert.Equal(t, wantOutput, got["result"])
-			assert.Equal(t, fail, got["error"])
-		} else {
-			assert.Equal(t, wantOutput, rec.Body.String())
-		}
-		assert.Equal(t, http.StatusOK, rec.Result().StatusCode)
+	in := Params{
+		"command":   "version",
+		"opt":       map[string]string{},
+		"arg":       []string{},
+		"_response": &httpResponse,
 	}
+	got, err := call.Fn(context.Background(), in)
+	require.NoError(t, err)
 
-	version := fmt.Sprintf("rclone %s\n", fs.Version)
-	errorString := "Unknown command\n"
-	t.Run("OK", func(t *testing.T) {
-		test("version", "", version, false)
-	})
-	t.Run("Fail", func(t *testing.T) {
-		test("unknown_command", "", version+errorString, true)
-	})
-	t.Run("Combined", func(t *testing.T) {
-		test("unknown_command", "COMBINED_OUTPUT", version+errorString, true)
-	})
-	t.Run("Stderr", func(t *testing.T) {
-		test("unknown_command", "STREAM_ONLY_STDERR", errorString, true)
-	})
-	t.Run("Stdout", func(t *testing.T) {
-		test("unknown_command", "STREAM_ONLY_STDOUT", version, true)
-	})
-	t.Run("Stream", func(t *testing.T) {
-		test("unknown_command", "STREAM", version+errorString, true)
-	})
+	assert.Equal(t, fmt.Sprintf("rclone %s\n", fs.Version), got["result"])
+	assert.Equal(t, false, got["error"])
 }

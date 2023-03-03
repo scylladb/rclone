@@ -1,10 +1,9 @@
-// Package webgui provides plugin functionality to the Web GUI.
 package webgui
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -16,7 +15,6 @@ import (
 
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/config"
-	"github.com/rclone/rclone/fs/rc/rcflags"
 )
 
 // PackageJSON is the structure of package.json of a plugin
@@ -64,9 +62,19 @@ var (
 	PluginsPath              string
 	pluginsConfigPath        string
 	availablePluginsJSONPath = "availablePlugins.json"
-	initSuccess              = false
-	initMutex                = &sync.Mutex{}
 )
+
+func init() {
+	cachePath = filepath.Join(config.CacheDir, "webgui")
+	PluginsPath = filepath.Join(cachePath, "plugins")
+	pluginsConfigPath = filepath.Join(PluginsPath, "config")
+
+	loadedPlugins = newPlugins(availablePluginsJSONPath)
+	err := loadedPlugins.readFromFile()
+	if err != nil {
+		fs.Errorf(nil, "error reading available plugins: %v", err)
+	}
+}
 
 // Plugins represents the structure how plugins are saved onto disk
 type Plugins struct {
@@ -82,28 +90,9 @@ func newPlugins(fileName string) *Plugins {
 	return &p
 }
 
-func initPluginsOrError() error {
-	if !rcflags.Opt.WebUI {
-		return errors.New("WebUI needs to be enabled for plugins to work")
-	}
-	initMutex.Lock()
-	defer initMutex.Unlock()
-	if !initSuccess {
-		cachePath = filepath.Join(config.GetCacheDir(), "webgui")
-		PluginsPath = filepath.Join(cachePath, "plugins")
-		pluginsConfigPath = filepath.Join(PluginsPath, "config")
-		loadedPlugins = newPlugins(availablePluginsJSONPath)
-		err := loadedPlugins.readFromFile()
-		if err != nil {
-			fs.Errorf(nil, "error reading available plugins: %v", err)
-		}
-		initSuccess = true
-	}
-
-	return nil
-}
-
 func (p *Plugins) readFromFile() (err error) {
+	//p.mutex.Lock()
+	//defer p.mutex.Unlock()
 	err = CreatePathIfNotExist(pluginsConfigPath)
 	if err != nil {
 		return err
@@ -111,7 +100,7 @@ func (p *Plugins) readFromFile() (err error) {
 	availablePluginsJSON := filepath.Join(pluginsConfigPath, p.fileName)
 	_, err = os.Stat(availablePluginsJSON)
 	if err == nil {
-		data, err := os.ReadFile(availablePluginsJSON)
+		data, err := ioutil.ReadFile(availablePluginsJSON)
 		if err != nil {
 			return err
 		}
@@ -133,7 +122,7 @@ func (p *Plugins) readFromFile() (err error) {
 func (p *Plugins) addPlugin(pluginName string, packageJSONPath string) (err error) {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
-	data, err := os.ReadFile(packageJSONPath)
+	data, err := ioutil.ReadFile(packageJSONPath)
 	if err != nil {
 		return err
 	}
@@ -180,13 +169,15 @@ func (p *Plugins) addTestPlugin(pluginName string, testURL string, handlesType [
 }
 
 func (p *Plugins) writeToFile() (err error) {
+	//p.mutex.Lock()
+	//defer p.mutex.Unlock()
 	availablePluginsJSON := filepath.Join(pluginsConfigPath, p.fileName)
 
 	file, err := json.MarshalIndent(p, "", " ")
 	if err != nil {
 		fs.Logf(nil, "%s", err)
 	}
-	err = os.WriteFile(availablePluginsJSON, file, 0755)
+	err = ioutil.WriteFile(availablePluginsJSON, file, 0755)
 	if err != nil {
 		fs.Logf(nil, "%s", err)
 	}
@@ -226,14 +217,14 @@ func (p *Plugins) GetPluginByName(name string) (out *PackageJSON, err error) {
 
 }
 
-// getAuthorRepoBranchGitHub gives author, repoName and branch from a github.com url
-//
+// getAuthorRepoBranchGithub gives author, repoName and branch from a github.com url
 //	url examples:
 //	https://github.com/rclone/rclone-webui-react/
 //	http://github.com/rclone/rclone-webui-react
 //	https://github.com/rclone/rclone-webui-react/tree/caman-js
-//	github.com/rclone/rclone-webui-react
-func getAuthorRepoBranchGitHub(url string) (author string, repoName string, branch string, err error) {
+// 	github.com/rclone/rclone-webui-react
+//
+func getAuthorRepoBranchGithub(url string) (author string, repoName string, branch string, err error) {
 	repoURL := url
 	repoURL = strings.Replace(repoURL, "https://", "", 1)
 	repoURL = strings.Replace(repoURL, "http://", "", 1)
@@ -293,22 +284,18 @@ func ServePluginOK(w http.ResponseWriter, r *http.Request, pluginsMatchResult []
 	return true
 }
 
-var referrerPathReg = regexp.MustCompile(`^(https?):\/\/(.+):([0-9]+)?\/(.*)\/?\?(.*)$`)
+var referrerPathReg = regexp.MustCompile("^(https?):\\/\\/(.+):([0-9]+)?\\/(.*)\\/?\\?(.*)$")
 
 // ServePluginWithReferrerOK check if redirectReferrer is set for the referred a plugin, if yes,
 // sends a redirect to actual url. This function is useful for plugins to refer to absolute paths when
 // the referrer in http.Request is set
 func ServePluginWithReferrerOK(w http.ResponseWriter, r *http.Request, path string) (ok bool) {
-	err := initPluginsOrError()
-	if err != nil {
-		return false
-	}
 	referrer := r.Referer()
 	referrerPathMatch := referrerPathReg.FindStringSubmatch(referrer)
 
-	if len(referrerPathMatch) > 3 {
+	if referrerPathMatch != nil && len(referrerPathMatch) > 3 {
 		referrerPluginMatch := PluginsMatch.FindStringSubmatch(referrerPathMatch[4])
-		if len(referrerPluginMatch) > 2 {
+		if referrerPluginMatch != nil && len(referrerPluginMatch) > 2 {
 			pluginKey := fmt.Sprintf("%s/%s", referrerPluginMatch[1], referrerPluginMatch[2])
 			currentPlugin, err := loadedPlugins.GetPluginByName(pluginKey)
 			if err != nil {

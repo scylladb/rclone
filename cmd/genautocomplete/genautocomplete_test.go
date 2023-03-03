@@ -1,6 +1,7 @@
 package genautocomplete
 
 import (
+	"io/ioutil"
 	"os"
 	"testing"
 
@@ -8,7 +9,7 @@ import (
 )
 
 func TestCompletionBash(t *testing.T) {
-	tempFile, err := os.CreateTemp("", "completion_bash")
+	tempFile, err := ioutil.TempFile("", "completion_bash")
 	assert.NoError(t, err)
 	defer func() {
 		_ = tempFile.Close()
@@ -17,14 +18,14 @@ func TestCompletionBash(t *testing.T) {
 
 	bashCommandDefinition.Run(bashCommandDefinition, []string{tempFile.Name()})
 
-	bs, err := os.ReadFile(tempFile.Name())
+	bs, err := ioutil.ReadFile(tempFile.Name())
 	assert.NoError(t, err)
 	assert.NotEmpty(t, string(bs))
 }
 
 func TestCompletionBashStdout(t *testing.T) {
 	originalStdout := os.Stdout
-	tempFile, err := os.CreateTemp("", "completion_zsh")
+	tempFile, err := ioutil.TempFile("", "completion_zsh")
 	assert.NoError(t, err)
 	defer func() {
 		_ = tempFile.Close()
@@ -36,13 +37,13 @@ func TestCompletionBashStdout(t *testing.T) {
 
 	bashCommandDefinition.Run(bashCommandDefinition, []string{"-"})
 
-	output, err := os.ReadFile(tempFile.Name())
+	output, err := ioutil.ReadFile(tempFile.Name())
 	assert.NoError(t, err)
 	assert.NotEmpty(t, string(output))
 }
 
 func TestCompletionZsh(t *testing.T) {
-	tempFile, err := os.CreateTemp("", "completion_zsh")
+	tempFile, err := ioutil.TempFile("", "completion_zsh")
 	assert.NoError(t, err)
 	defer func() {
 		_ = tempFile.Close()
@@ -51,14 +52,14 @@ func TestCompletionZsh(t *testing.T) {
 
 	zshCommandDefinition.Run(zshCommandDefinition, []string{tempFile.Name()})
 
-	bs, err := os.ReadFile(tempFile.Name())
+	bs, err := ioutil.ReadFile(tempFile.Name())
 	assert.NoError(t, err)
 	assert.NotEmpty(t, string(bs))
 }
 
 func TestCompletionZshStdout(t *testing.T) {
 	originalStdout := os.Stdout
-	tempFile, err := os.CreateTemp("", "completion_zsh")
+	tempFile, err := ioutil.TempFile("", "completion_zsh")
 	assert.NoError(t, err)
 	defer func() {
 		_ = tempFile.Close()
@@ -69,13 +70,13 @@ func TestCompletionZshStdout(t *testing.T) {
 	defer func() { os.Stdout = originalStdout }()
 
 	zshCommandDefinition.Run(zshCommandDefinition, []string{"-"})
-	output, err := os.ReadFile(tempFile.Name())
+	output, err := ioutil.ReadFile(tempFile.Name())
 	assert.NoError(t, err)
 	assert.NotEmpty(t, string(output))
 }
 
 func TestCompletionFish(t *testing.T) {
-	tempFile, err := os.CreateTemp("", "completion_fish")
+	tempFile, err := ioutil.TempFile("", "completion_fish")
 	assert.NoError(t, err)
 	defer func() {
 		_ = tempFile.Close()
@@ -84,14 +85,14 @@ func TestCompletionFish(t *testing.T) {
 
 	fishCommandDefinition.Run(fishCommandDefinition, []string{tempFile.Name()})
 
-	bs, err := os.ReadFile(tempFile.Name())
+	bs, err := ioutil.ReadFile(tempFile.Name())
 	assert.NoError(t, err)
 	assert.NotEmpty(t, string(bs))
 }
 
 func TestCompletionFishStdout(t *testing.T) {
 	originalStdout := os.Stdout
-	tempFile, err := os.CreateTemp("", "completion_zsh")
+	tempFile, err := ioutil.TempFile("", "completion_zsh")
 	assert.NoError(t, err)
 	defer func() {
 		_ = tempFile.Close()
@@ -103,7 +104,7 @@ func TestCompletionFishStdout(t *testing.T) {
 
 	fishCommandDefinition.Run(fishCommandDefinition, []string{"-"})
 
-	output, err := os.ReadFile(tempFile.Name())
+	output, err := ioutil.ReadFile(tempFile.Name())
 	assert.NoError(t, err)
 	assert.NotEmpty(t, string(output))
 }

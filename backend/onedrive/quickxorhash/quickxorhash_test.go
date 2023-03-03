@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"hash"
-	"math/rand"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -167,16 +166,3 @@ func TestReset(t *testing.T) {
 
 // check interface
 var _ hash.Hash = (*quickXorHash)(nil)
-
-func BenchmarkQuickXorHash(b *testing.B) {
-	b.SetBytes(1 << 20)
-	buf := make([]byte, 1<<20)
-	rand.Read(buf)
-	h := New()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		h.Reset()
-		h.Write(buf)
-		h.Sum(nil)
-	}
-}

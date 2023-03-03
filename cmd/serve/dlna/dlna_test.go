@@ -5,7 +5,7 @@ import (
 	"context"
 	"fmt"
 	"html"
-	"io"
+	"io/ioutil"
 	"net/http"
 	"os"
 	"strings"
@@ -13,12 +13,12 @@ import (
 
 	"github.com/anacrolix/dms/soap"
 
-	"github.com/rclone/rclone/fs/config/configfile"
 	"github.com/rclone/rclone/vfs"
 
 	_ "github.com/rclone/rclone/backend/local"
 	"github.com/rclone/rclone/cmd/serve/dlna/dlnaflags"
 	"github.com/rclone/rclone/fs"
+	"github.com/rclone/rclone/fs/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -35,15 +35,13 @@ const (
 func startServer(t *testing.T, f fs.Fs) {
 	opt := dlnaflags.DefaultOpt
 	opt.ListenAddr = testBindAddress
-	var err error
-	dlnaServer, err = newServer(f, &opt)
-	assert.NoError(t, err)
+	dlnaServer = newServer(f, &opt)
 	assert.NoError(t, dlnaServer.Serve())
 	baseURL = "http://" + dlnaServer.HTTPConn.Addr().String()
 }
 
 func TestInit(t *testing.T) {
-	configfile.Install()
+	config.LoadConfig(context.Background())
 
 	f, err := fs.NewFs(context.Background(), "testdata/files")
 	l, _ := f.List(context.Background(), "")
@@ -60,7 +58,7 @@ func TestRootSCPD(t *testing.T) {
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	body, err := io.ReadAll(resp.Body)
+	body, err := ioutil.ReadAll(resp.Body)
 	require.NoError(t, err)
 	// Make sure that the SCPD contains a CDS service.
 	require.Contains(t, string(body),
@@ -80,7 +78,7 @@ func TestServeContent(t *testing.T) {
 	require.NoError(t, err)
 	defer fs.CheckClose(resp.Body, &err)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	actualContents, err := io.ReadAll(resp.Body)
+	actualContents, err := ioutil.ReadAll(resp.Body)
 	assert.NoError(t, err)
 
 	// Now compare the contents with the golden file.
@@ -90,7 +88,7 @@ func TestServeContent(t *testing.T) {
 	goldenReader, err := goldenFile.Open(os.O_RDONLY)
 	assert.NoError(t, err)
 	defer fs.CheckClose(goldenReader, &err)
-	goldenContents, err := io.ReadAll(goldenReader)
+	goldenContents, err := ioutil.ReadAll(goldenReader)
 	assert.NoError(t, err)
 
 	require.Equal(t, goldenContents, actualContents)
@@ -119,10 +117,8 @@ func TestContentDirectoryBrowseMetadata(t *testing.T) {
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	body, err := io.ReadAll(resp.Body)
+	body, err := ioutil.ReadAll(resp.Body)
 	require.NoError(t, err)
-	// should contain an appropriate URN
-	require.Contains(t, string(body), "urn:schemas-upnp-org:service:ContentDirectory:1")
 	// expect a <container> element
 	require.Contains(t, string(body), html.EscapeString("<container "))
 	require.NotContains(t, string(body), html.EscapeString("<item "))
@@ -145,7 +141,7 @@ func TestMediaReceiverRegistrarService(t *testing.T) {
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	body, err := io.ReadAll(resp.Body)
+	body, err := ioutil.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.Contains(t, string(body), "<RegistrationRespMsg>")
 }
@@ -173,7 +169,7 @@ func TestContentDirectoryBrowseDirectChildren(t *testing.T) {
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	body, err := io.ReadAll(resp.Body)
+	body, err := ioutil.ReadAll(resp.Body)
 	require.NoError(t, err)
 	// expect video.mp4, video.srt, video.en.srt URLs to be in the DIDL
 	require.Contains(t, string(body), "/r/video.mp4")
@@ -201,7 +197,7 @@ func TestContentDirectoryBrowseDirectChildren(t *testing.T) {
 	resp, err = http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	body, err = io.ReadAll(resp.Body)
+	body, err = ioutil.ReadAll(resp.Body)
 	require.NoError(t, err)
 	// expect video.mp4, video.srt, URLs to be in the DIDL
 	require.Contains(t, string(body), "/r/subdir/video.mp4")

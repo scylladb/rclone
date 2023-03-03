@@ -2,7 +2,6 @@ package accounting
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
 	"github.com/rclone/rclone/fs/rc"
@@ -87,22 +86,18 @@ Returns the following values:
 
 ` + "```" + `
 {
-	"bytes": total transferred bytes since the start of the group,
-	"checks": number of files checked,
-	"deletes" : number of files deleted,
-	"elapsedTime": time in floating point seconds since rclone was started,
+	"speed": average speed in bytes/sec since start of the process,
+	"bytes": total transferred bytes since the start of the process,
 	"errors": number of errors,
-	"eta": estimated time in seconds until the group completes,
-	"fatalError": boolean whether there has been at least one fatal error,
-	"lastError": last error string,
-	"renames" : number of files renamed,
-	"retryError": boolean showing whether there has been at least one non-NoRetryError,
-	"speed": average speed in bytes per second since start of the group,
-	"totalBytes": total number of bytes in the group,
-	"totalChecks": total number of checks in the group,
-	"totalTransfers": total number of transfers in the group,
-	"transferTime" : total time spent on running jobs,
+	"fatalError": whether there has been at least one FatalError,
+	"retryError": whether there has been at least one non-NoRetryError,
+	"checks": number of checked files,
 	"transfers": number of transferred files,
+	"deletes" : number of deleted files,
+	"renames" : number of renamed files,
+	"transferTime" : total time spent on running jobs,
+	"elapsedTime": time in seconds since the start of the process,
+	"lastError": last occurred error,
 	"transferring": an array of currently active file transfers:
 		[
 			{
@@ -110,8 +105,8 @@ Returns the following values:
 				"eta": estimated time in seconds until file transfer completion
 				"name": name of the file,
 				"percentage": progress of the file transfer in percent,
-				"speed": average speed over the whole transfer in bytes per second,
-				"speedAvg": current speed in bytes per second as an exponentially weighted moving average,
+				"speed": average speed over the whole transfer in bytes/sec,
+				"speedAvg": current speed in bytes/sec as an exponentially weighted moving average,
 				"size": size of the file in bytes
 			}
 		],
@@ -191,9 +186,6 @@ func rcResetStats(ctx context.Context, in rc.Params) (rc.Params, error) {
 
 	if group != "" {
 		stats := groups.get(group)
-		if stats == nil {
-			return rc.Params{}, fmt.Errorf("group %q not found", group)
-		}
 		stats.ResetErrors()
 		stats.ResetCounters()
 	} else {
@@ -239,7 +231,7 @@ func init() {
 		Fn:    rcDeleteStats,
 		Title: "Delete stats group.",
 		Help: `
-This deletes entire stats group.
+This deletes entire stats group
 
 Parameters
 
@@ -353,7 +345,6 @@ func (sg *statsGroups) names() []string {
 
 // sum returns aggregate stats that contains summation of all groups.
 func (sg *statsGroups) sum(ctx context.Context) *StatsInfo {
-	startTime := GlobalStats().startTime
 	sg.mu.Lock()
 	defer sg.mu.Unlock()
 
@@ -363,38 +354,25 @@ func (sg *statsGroups) sum(ctx context.Context) *StatsInfo {
 		{
 			sum.bytes += stats.bytes
 			sum.errors += stats.errors
+			sum.fatalError = sum.fatalError || stats.fatalError
+			sum.retryError = sum.retryError || stats.retryError
+			sum.checks += stats.checks
+			sum.transfers += stats.transfers
+			sum.deletes += stats.deletes
+			sum.deletedDirs += stats.deletedDirs
+			sum.renames += stats.renames
+			sum.checking.merge(stats.checking)
+			sum.transferring.merge(stats.transferring)
+			sum.inProgress.merge(stats.inProgress)
 			if sum.lastError == nil && stats.lastError != nil {
 				sum.lastError = stats.lastError
 			}
-			sum.fatalError = sum.fatalError || stats.fatalError
-			sum.retryError = sum.retryError || stats.retryError
-			if stats.retryAfter.After(sum.retryAfter) {
-				// Update the retryAfter field only if it is a later date than the current one in the sum
-				sum.retryAfter = stats.retryAfter
-			}
-			sum.checks += stats.checks
-			sum.checking.merge(stats.checking)
-			sum.checkQueue += stats.checkQueue
-			sum.checkQueueSize += stats.checkQueueSize
-			sum.transfers += stats.transfers
-			sum.transferring.merge(stats.transferring)
-			sum.transferQueueSize += stats.transferQueueSize
-			sum.renames += stats.renames
-			sum.renameQueue += stats.renameQueue
-			sum.renameQueueSize += stats.renameQueueSize
-			sum.deletes += stats.deletes
-			sum.deletedDirs += stats.deletedDirs
-			sum.inProgress.merge(stats.inProgress)
 			sum.startedTransfers = append(sum.startedTransfers, stats.startedTransfers...)
-			sum.oldTimeRanges = append(sum.oldTimeRanges, stats.oldTimeRanges...)
 			sum.oldDuration += stats.oldDuration
-			stats.average.mu.Lock()
-			sum.average.speed += stats.average.speed
-			stats.average.mu.Unlock()
+			sum.oldTimeRanges = append(sum.oldTimeRanges, stats.oldTimeRanges...)
 		}
 		stats.mu.RUnlock()
 	}
-	sum.startTime = startTime
 	return sum
 }
 

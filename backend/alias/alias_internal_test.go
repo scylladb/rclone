@@ -11,7 +11,6 @@ import (
 	_ "github.com/rclone/rclone/backend/local" // pull in test backend
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/config"
-	"github.com/rclone/rclone/fs/config/configfile"
 	"github.com/stretchr/testify/require"
 )
 
@@ -20,7 +19,7 @@ var (
 )
 
 func prepare(t *testing.T, root string) {
-	configfile.Install()
+	config.LoadConfig(context.Background())
 
 	// Configure the remote
 	config.FileSet(remoteName, "type", "alias")
@@ -55,14 +54,13 @@ func TestNewFS(t *testing.T) {
 			{"four/under four.txt", 9, false},
 		}},
 		{"four", "..", "", true, []testEntry{
-			{"five", -1, true},
-			{"under four.txt", 9, false},
+			{"four", -1, true},
+			{"one%.txt", 6, false},
+			{"three", -1, true},
+			{"two.html", 7, false},
 		}},
-		{"", "../../three", "", true, []testEntry{
+		{"four", "../three", "", true, []testEntry{
 			{"underthree.txt", 9, false},
-		}},
-		{"four", "../../five", "", true, []testEntry{
-			{"underfive.txt", 6, false},
 		}},
 	} {
 		what := fmt.Sprintf("test %d remoteRoot=%q, fsRoot=%q, fsList=%q", testi, test.remoteRoot, test.fsRoot, test.fsList)

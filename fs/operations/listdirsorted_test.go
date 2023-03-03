@@ -16,6 +16,7 @@ import (
 // which can't be tested there due to import loops.
 func TestListDirSorted(t *testing.T) {
 	r := fstest.NewRun(t)
+	defer r.Finalise()
 
 	ctx := context.Background()
 	fi := filter.GetConfig(ctx)
@@ -33,7 +34,7 @@ func TestListDirSorted(t *testing.T) {
 		r.WriteObject(context.Background(), "sub dir/ignore dir/should be ignored", "to ignore", t1),
 		r.WriteObject(context.Background(), "sub dir/sub sub dir/hello world3", "hello world", t1),
 	}
-	r.CheckRemoteItems(t, files...)
+	fstest.CheckItems(t, r.Fremote, files...)
 	var items fs.DirEntries
 	var err error
 
@@ -80,7 +81,7 @@ func TestListDirSorted(t *testing.T) {
 	assert.Equal(t, "sub dir/sub sub dir/", str(1))
 
 	// testing ignore file
-	fi.Opt.ExcludeFile = []string{".ignore"}
+	fi.Opt.ExcludeFile = ".ignore"
 
 	items, err = list.DirSorted(context.Background(), r.Fremote, false, "sub dir")
 	require.NoError(t, err)
@@ -97,7 +98,7 @@ func TestListDirSorted(t *testing.T) {
 	assert.Equal(t, "sub dir/ignore dir/.ignore", str(0))
 	assert.Equal(t, "sub dir/ignore dir/should be ignored", str(1))
 
-	fi.Opt.ExcludeFile = nil
+	fi.Opt.ExcludeFile = ""
 	items, err = list.DirSorted(context.Background(), r.Fremote, false, "sub dir/ignore dir")
 	require.NoError(t, err)
 	require.Len(t, items, 2)

@@ -3,55 +3,23 @@ package scan
 
 import (
 	"context"
-	"fmt"
 	"path"
 	"sync"
-	"time"
 
+	"github.com/pkg/errors"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/walk"
 )
 
 // Dir represents a directory found in the remote
 type Dir struct {
-	parent            *Dir
-	path              string
-	mu                sync.Mutex
-	size              int64
-	count             int64
-	countUnknownSize  int64
-	entries           fs.DirEntries
-	dirs              map[string]*Dir
-	readError         error
-	entriesHaveErrors bool
-}
-
-// Attrs contains accumulated properties for a directory entry
-//
-// Files with unknown size are counted separately but also included
-// in the total count. They are not included in the size, i.e. treated
-// as empty files, which means the size may be underestimated.
-type Attrs struct {
-	ModTime           time.Time
-	Size              int64
-	Count             int64
-	CountUnknownSize  int64
-	IsDir             bool
-	Readable          bool
-	EntriesHaveErrors bool
-}
-
-// AverageSize calculates average size of files in directory
-//
-// If there are files with unknown size, this returns the average over
-// files with known sizes, which means it may be under- or
-// overestimated.
-func (a *Attrs) AverageSize() float64 {
-	countKnownSize := a.Count - a.CountUnknownSize
-	if countKnownSize > 0 {
-		return float64(a.Size) / float64(countKnownSize)
-	}
-	return 0
+	parent  *Dir
+	path    string
+	mu      sync.Mutex
+	count   int64
+	size    int64
+	entries fs.DirEntries
+	dirs    map[string]*Dir
 }
 
 // Parent returns the directory above this one
@@ -67,25 +35,18 @@ func (d *Dir) Path() string {
 }
 
 // make a new directory
-func newDir(parent *Dir, dirPath string, entries fs.DirEntries, err error) *Dir {
+func newDir(parent *Dir, dirPath string, entries fs.DirEntries) *Dir {
 	d := &Dir{
-		parent:    parent,
-		path:      dirPath,
-		entries:   entries,
-		dirs:      make(map[string]*Dir),
-		readError: err,
+		parent:  parent,
+		path:    dirPath,
+		entries: entries,
+		dirs:    make(map[string]*Dir),
 	}
 	// Count size in this dir
 	for _, entry := range entries {
 		if o, ok := entry.(fs.Object); ok {
 			d.count++
-			size := o.Size()
-			if size < 0 {
-				// Some backends may return -1 because size of object is not known
-				d.countUnknownSize++
-			} else {
-				d.size += size
-			}
+			d.size += o.Size()
 		}
 	}
 	// Set my directory entry in parent
@@ -98,12 +59,8 @@ func newDir(parent *Dir, dirPath string, entries fs.DirEntries, err error) *Dir 
 	// Accumulate counts in parents
 	for ; parent != nil; parent = parent.parent {
 		parent.mu.Lock()
-		parent.size += d.size
 		parent.count += d.count
-		parent.countUnknownSize += d.countUnknownSize
-		if d.readError != nil {
-			parent.entriesHaveErrors = true
-		}
+		parent.size += d.size
 		parent.mu.Unlock()
 	}
 	return d
@@ -128,24 +85,17 @@ func (d *Dir) Remove(i int) {
 // Call with d.mu held
 func (d *Dir) remove(i int) {
 	size := d.entries[i].Size()
-	countUnknownSize := int64(0)
-	if size < 0 {
-		size = 0
-		countUnknownSize = 1
-	}
 	count := int64(1)
 
 	subDir, ok := d.getDir(i)
 	if ok {
 		size = subDir.size
 		count = subDir.count
-		countUnknownSize = subDir.countUnknownSize
 		delete(d.dirs, path.Base(subDir.path))
 	}
 
 	d.size -= size
 	d.count -= count
-	d.countUnknownSize -= countUnknownSize
 	d.entries = append(d.entries[:i], d.entries[i+1:]...)
 
 	dir := d
@@ -155,7 +105,6 @@ func (d *Dir) remove(i int) {
 		parent.dirs[path.Base(dir.path)] = dir
 		parent.size -= size
 		parent.count -= count
-		parent.countUnknownSize -= countUnknownSize
 		dir = parent
 		parent.mu.Unlock()
 	}
@@ -195,33 +144,19 @@ func (d *Dir) Attr() (size int64, count int64) {
 	return d.size, d.count
 }
 
-// attrI returns the size, count and flags for the i-th directory entry
-func (d *Dir) attrI(i int) (attrs Attrs, err error) {
+// AttrI returns the size, count and flags for the i-th directory entry
+func (d *Dir) AttrI(i int) (size int64, count int64, isDir bool, readable bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	subDir, isDir := d.getDir(i)
 	if !isDir {
-		return Attrs{time.Time{}, d.entries[i].Size(), 0, 0, false, true, d.entriesHaveErrors}, d.readError
+		return d.entries[i].Size(), 0, false, true
 	}
 	if subDir == nil {
-		return Attrs{time.Time{}, 0, 0, 0, true, false, false}, nil
+		return 0, 0, true, false
 	}
-	size, count := subDir.Attr()
-	return Attrs{time.Time{}, size, count, subDir.countUnknownSize, true, true, subDir.entriesHaveErrors}, subDir.readError
-}
-
-// AttrI returns the size, count and flags for the i-th directory entry
-func (d *Dir) AttrI(i int) (attrs Attrs, err error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.attrI(i)
-}
-
-// AttrWithModTimeI returns the modtime, size, count and flags for the i-th directory entry
-func (d *Dir) AttrWithModTimeI(ctx context.Context, i int) (attrs Attrs, err error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	attrs, err = d.attrI(i)
-	attrs.ModTime = d.entries[i].ModTime(ctx)
-	return
+	size, count = subDir.Attr()
+	return size, count, true, true
 }
 
 // Scan the Fs passed in, returning a root directory channel and an
@@ -234,6 +169,9 @@ func Scan(ctx context.Context, f fs.Fs) (chan *Dir, chan error, chan struct{}) {
 	go func() {
 		parents := map[string]*Dir{}
 		err := walk.Walk(ctx, f, "", false, ci.MaxDepth, func(dirPath string, entries fs.DirEntries, err error) error {
+			if err != nil {
+				return err // FIXME mark directory as errored instead of aborting
+			}
 			var parent *Dir
 			if dirPath != "" {
 				parentPath := path.Dir(dirPath)
@@ -243,10 +181,10 @@ func Scan(ctx context.Context, f fs.Fs) (chan *Dir, chan error, chan struct{}) {
 				var ok bool
 				parent, ok = parents[parentPath]
 				if !ok {
-					errChan <- fmt.Errorf("couldn't find parent for %q", dirPath)
+					errChan <- errors.Errorf("couldn't find parent for %q", dirPath)
 				}
 			}
-			d := newDir(parent, dirPath, entries, err)
+			d := newDir(parent, dirPath, entries)
 			parents[dirPath] = d
 			if dirPath == "" {
 				root <- d
@@ -260,7 +198,7 @@ func Scan(ctx context.Context, f fs.Fs) (chan *Dir, chan error, chan struct{}) {
 			return nil
 		})
 		if err != nil {
-			errChan <- fmt.Errorf("ncdu listing failed: %w", err)
+			errChan <- errors.Wrap(err, "ncdu listing failed")
 		}
 		errChan <- nil
 	}()

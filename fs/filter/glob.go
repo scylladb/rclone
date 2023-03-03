@@ -4,24 +4,23 @@ package filter
 
 import (
 	"bytes"
-	"fmt"
 	"regexp"
 	"strings"
 
-	"github.com/rclone/rclone/fs"
+	"github.com/pkg/errors"
 )
 
-// GlobToRegexp converts an rsync style glob to a regexp
+// globToRegexp converts an rsync style glob to a regexp
 //
 // documented in filtering.md
-func GlobToRegexp(glob string, ignoreCase bool) (*regexp.Regexp, error) {
+func globToRegexp(glob string, ignoreCase bool) (*regexp.Regexp, error) {
 	var re bytes.Buffer
 	if ignoreCase {
 		_, _ = re.WriteString("(?i)")
 	}
 	if strings.HasPrefix(glob, "/") {
 		glob = glob[1:]
-		_ = re.WriteByte('^')
+		_, _ = re.WriteRune('^')
 	} else {
 		_, _ = re.WriteString("(^|/)")
 	}
@@ -34,49 +33,19 @@ func GlobToRegexp(glob string, ignoreCase bool) (*regexp.Regexp, error) {
 			case 2:
 				_, _ = re.WriteString(`.*`)
 			default:
-				return fmt.Errorf("too many stars in %q", glob)
+				return errors.Errorf("too many stars in %q", glob)
 			}
 		}
 		consecutiveStars = 0
 		return nil
 	}
-	overwriteLastChar := func(c byte) {
-		buf := re.Bytes()
-		buf[len(buf)-1] = c
-	}
 	inBraces := false
 	inBrackets := 0
 	slashed := false
-	inRegexp := false    // inside {{ ... }}
-	inRegexpEnd := false // have received }} waiting for more
-	var next, last rune
 	for _, c := range glob {
-		next, last = c, next
 		if slashed {
 			_, _ = re.WriteRune(c)
 			slashed = false
-			continue
-		}
-		if inRegexpEnd {
-			if c == '}' {
-				// Regexp is ending with }} choose longest segment
-				// Replace final ) with }
-				overwriteLastChar('}')
-				_ = re.WriteByte(')')
-				continue
-			} else {
-				inRegexpEnd = false
-			}
-		}
-		if inRegexp {
-			if c == '}' && last == '}' {
-				inRegexp = false
-				inRegexpEnd = true
-				// Replace final } with )
-				overwriteLastChar(')')
-			} else {
-				_, _ = re.WriteRune(c)
-			}
 			continue
 		}
 		if c != '*' {
@@ -107,33 +76,27 @@ func GlobToRegexp(glob string, ignoreCase bool) (*regexp.Regexp, error) {
 			_, _ = re.WriteRune(c)
 			inBrackets++
 		case ']':
-			return nil, fmt.Errorf("mismatched ']' in glob %q", glob)
+			return nil, errors.Errorf("mismatched ']' in glob %q", glob)
 		case '{':
 			if inBraces {
-				if last == '{' {
-					inRegexp = true
-					inBraces = false
-				} else {
-					return nil, fmt.Errorf("can't nest '{' '}' in glob %q", glob)
-				}
-			} else {
-				inBraces = true
-				_ = re.WriteByte('(')
+				return nil, errors.Errorf("can't nest '{' '}' in glob %q", glob)
 			}
+			inBraces = true
+			_, _ = re.WriteRune('(')
 		case '}':
 			if !inBraces {
-				return nil, fmt.Errorf("mismatched '{' and '}' in glob %q", glob)
+				return nil, errors.Errorf("mismatched '{' and '}' in glob %q", glob)
 			}
-			_ = re.WriteByte(')')
+			_, _ = re.WriteRune(')')
 			inBraces = false
 		case ',':
 			if inBraces {
-				_ = re.WriteByte('|')
+				_, _ = re.WriteRune('|')
 			} else {
 				_, _ = re.WriteRune(c)
 			}
 		case '.', '+', '(', ')', '|', '^', '$': // regexp meta characters not dealt with above
-			_ = re.WriteByte('\\')
+			_, _ = re.WriteRune('\\')
 			_, _ = re.WriteRune(c)
 		default:
 			_, _ = re.WriteRune(c)
@@ -144,27 +107,22 @@ func GlobToRegexp(glob string, ignoreCase bool) (*regexp.Regexp, error) {
 		return nil, err
 	}
 	if inBrackets > 0 {
-		return nil, fmt.Errorf("mismatched '[' and ']' in glob %q", glob)
+		return nil, errors.Errorf("mismatched '[' and ']' in glob %q", glob)
 	}
 	if inBraces {
-		return nil, fmt.Errorf("mismatched '{' and '}' in glob %q", glob)
+		return nil, errors.Errorf("mismatched '{' and '}' in glob %q", glob)
 	}
-	if inRegexp {
-		return nil, fmt.Errorf("mismatched '{{' and '}}' in glob %q", glob)
-	}
-	_ = re.WriteByte('$')
+	_, _ = re.WriteRune('$')
 	result, err := regexp.Compile(re.String())
 	if err != nil {
-		return nil, fmt.Errorf("bad glob pattern %q (regexp %q): %w", glob, re.String(), err)
+		return nil, errors.Wrapf(err, "bad glob pattern %q (regexp %q)", glob, re.String())
 	}
 	return result, nil
 }
 
 var (
-	// Can't deal with
-	//   / or ** in {}
-	//   {{ regexp }}
-	tooHardRe = regexp.MustCompile(`({[^{}]*(\*\*|/)[^{}]*})|\{\{|\}\}`)
+	// Can't deal with / or ** in {}
+	tooHardRe = regexp.MustCompile(`{[^{}]*(\*\*|/)[^{}]*}`)
 
 	// Squash all /
 	squashSlash = regexp.MustCompile(`/{2,}`)
@@ -177,7 +135,6 @@ var (
 func globToDirGlobs(glob string) (out []string) {
 	if tooHardRe.MatchString(glob) {
 		// Can't figure this one out so return any directory might match
-		fs.Infof(nil, "Can't figure out directory filters from %q: looking in all directories", glob)
 		out = append(out, "/**")
 		return out
 	}

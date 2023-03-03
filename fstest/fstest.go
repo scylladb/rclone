@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"math/rand"
 	"os"
@@ -24,7 +25,6 @@ import (
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/accounting"
 	"github.com/rclone/rclone/fs/config"
-	"github.com/rclone/rclone/fs/config/configfile"
 	"github.com/rclone/rclone/fs/hash"
 	"github.com/rclone/rclone/fs/walk"
 	"github.com/rclone/rclone/lib/random"
@@ -68,10 +68,9 @@ func Initialise() {
 	// parse the flags any more so this doesn't happen
 	// automatically
 	if envConfig := os.Getenv("RCLONE_CONFIG"); envConfig != "" {
-		_ = config.SetConfigPath(envConfig)
+		config.ConfigPath = envConfig
 	}
-	configfile.Install()
-	accounting.Start(ctx)
+	config.LoadConfig(ctx)
 	if *Verbose {
 		ci.LogLevel = fs.LogLevelDebug
 	}
@@ -344,12 +343,6 @@ func CheckListing(t *testing.T, f fs.Fs, items []Item) {
 	CheckListingWithPrecision(t, f, items, nil, precision)
 }
 
-// CheckItemsWithPrecision checks the fs with the specified precision
-// to see if it has the expected items.
-func CheckItemsWithPrecision(t *testing.T, f fs.Fs, precision time.Duration, items ...Item) {
-	CheckListingWithPrecision(t, f, items, nil, precision)
-}
-
 // CheckItems checks the fs to see if it has only the items passed in
 // using a precision of fs.Config.ModifyWindow
 func CheckItems(t *testing.T, f fs.Fs, items ...Item) {
@@ -410,7 +403,7 @@ func Time(timeString string) time.Time {
 
 // LocalRemote creates a temporary directory name for local remotes
 func LocalRemote() (path string, err error) {
-	path, err = os.MkdirTemp("", "rclone")
+	path, err = ioutil.TempDir("", "rclone")
 	if err == nil {
 		// Now remove the directory
 		err = os.Remove(path)

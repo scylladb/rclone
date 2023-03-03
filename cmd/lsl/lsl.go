@@ -1,4 +1,3 @@
-// Package lsl provides the lsl command.
 package lsl
 
 import (
@@ -31,9 +30,6 @@ Eg
         37600 2016-06-25 18:55:40.814629136 fubuwic
 
 ` + lshelp.Help,
-	Annotations: map[string]string{
-		"versionIntroduced": "v1.02",
-	},
 	Run: func(command *cobra.Command, args []string) {
 		cmd.CheckArgs(1, 1, command, args)
 		fsrc := cmd.NewFsSrc(args)

@@ -18,7 +18,6 @@ start() {
     echo host=$(docker_ip)
     echo user=$USER
     echo pass=$(rclone obscure $PASS)
-    echo encoding=Asterisk,Ctl,Dot,Slash
     echo _connect=$(docker_ip):21
 }
 

@@ -13,14 +13,12 @@ import (
 	_ "net/http/pprof" // install the pprof http handlers
 	"time"
 
-	libhttp "github.com/rclone/rclone/lib/http"
+	"github.com/rclone/rclone/cmd/serve/httplib"
 )
 
 // Options contains options for the remote control server
 type Options struct {
-	HTTP                     libhttp.Config
-	Auth                     libhttp.AuthConfig
-	Template                 libhttp.TemplateConfig
+	HTTPOptions              httplib.Options
 	Enabled                  bool   // set to enable the server
 	Serve                    bool   // set to serve files from remotes
 	Files                    string // set to enable serving files locally
@@ -38,16 +36,14 @@ type Options struct {
 
 // DefaultOpt is the default values used for Options
 var DefaultOpt = Options{
-	HTTP:              libhttp.DefaultCfg(),
-	Auth:              libhttp.DefaultAuthCfg(),
-	Template:          libhttp.DefaultTemplateCfg(),
+	HTTPOptions:       httplib.DefaultOpt,
 	Enabled:           false,
 	JobExpireDuration: 60 * time.Second,
 	JobExpireInterval: 10 * time.Second,
 }
 
 func init() {
-	DefaultOpt.HTTP.ListenAddr = []string{"localhost:5572"}
+	DefaultOpt.HTTPOptions.ListenAddr = "localhost:5572"
 }
 
 // WriteJSON writes JSON in out to w

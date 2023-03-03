@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/putdotio/go-putio/putio"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/config/configmap"
@@ -80,7 +80,7 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (f fs.Fs,
 	httpClient := fshttp.NewClient(ctx)
 	oAuthClient, _, err := oauthutil.NewClientWithBaseClient(ctx, name, m, putioConfig, httpClient)
 	if err != nil {
-		return nil, fmt.Errorf("failed to configure putio: %w", err)
+		return nil, errors.Wrap(err, "failed to configure putio")
 	}
 	p := &Fs{
 		name:        name,
@@ -147,7 +147,7 @@ func (f *Fs) CreateDir(ctx context.Context, pathID, leaf string) (newID string, 
 	err = f.pacer.Call(func() (bool, error) {
 		// fs.Debugf(f, "creating folder. part: %s, parentID: %d", leaf, parentID)
 		entry, err = f.client.Files.CreateFolder(ctx, f.opt.Enc.FromStandardName(leaf), parentID)
-		return shouldRetry(ctx, err)
+		return shouldRetry(err)
 	})
 	return itoa(entry.ID), err
 }
@@ -164,7 +164,7 @@ func (f *Fs) FindLeaf(ctx context.Context, pathID, leaf string) (pathIDOut strin
 	err = f.pacer.Call(func() (bool, error) {
 		// fs.Debugf(f, "listing file: %d", fileID)
 		children, _, err = f.client.Files.List(ctx, fileID)
-		return shouldRetry(ctx, err)
+		return shouldRetry(err)
 	})
 	if err != nil {
 		if perr, ok := err.(*putio.ErrorResponse); ok && perr.Response.StatusCode == 404 {
@@ -205,7 +205,7 @@ func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err e
 	err = f.pacer.Call(func() (bool, error) {
 		// fs.Debugf(f, "listing files inside List: %d", parentID)
 		children, _, err = f.client.Files.List(ctx, parentID)
-		return shouldRetry(ctx, err)
+		return shouldRetry(err)
 	})
 	if err != nil {
 		return
@@ -230,7 +230,7 @@ func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err e
 
 // Put the object
 //
-// Copy the reader in to the new object which is returned.
+// Copy the reader in to the new object which is returned
 //
 // The new object may have been created if an error is returned
 func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (o fs.Object, err error) {
@@ -271,7 +271,7 @@ func (f *Fs) PutUnchecked(ctx context.Context, in io.Reader, src fs.ObjectInfo, 
 	err = f.pacer.Call(func() (bool, error) {
 		// fs.Debugf(f, "getting file: %d", fileID)
 		entry, err = f.client.Files.Get(ctx, fileID)
-		return shouldRetry(ctx, err)
+		return shouldRetry(err)
 	})
 	if err != nil {
 		return nil, err
@@ -282,10 +282,11 @@ func (f *Fs) PutUnchecked(ctx context.Context, in io.Reader, src fs.ObjectInfo, 
 func (f *Fs) createUpload(ctx context.Context, name string, size int64, parentID string, modTime time.Time, options []fs.OpenOption) (location string, err error) {
 	// defer log.Trace(f, "name=%v, size=%v, parentID=%v, modTime=%v", name, size, parentID, modTime.String())("location=%v, err=%v", location, &err)
 	err = f.pacer.Call(func() (bool, error) {
-		req, err := http.NewRequestWithContext(ctx, "POST", "https://upload.put.io/files/", nil)
+		req, err := http.NewRequest("POST", "https://upload.put.io/files/", nil)
 		if err != nil {
 			return false, err
 		}
+		req = req.WithContext(ctx) // go1.13 can use NewRequestWithContext
 		req.Header.Set("tus-resumable", "1.0.0")
 		req.Header.Set("upload-length", strconv.FormatInt(size, 10))
 		b64name := base64.StdEncoding.EncodeToString([]byte(f.opt.Enc.FromStandardName(name)))
@@ -295,15 +296,15 @@ func (f *Fs) createUpload(ctx context.Context, name string, size int64, parentID
 		req.Header.Set("upload-metadata", fmt.Sprintf("name %s,no-torrent %s,parent_id %s,updated-at %s", b64name, b64true, b64parentID, b64modifiedAt))
 		fs.OpenOptionAddHTTPHeaders(req.Header, options)
 		resp, err := f.oAuthClient.Do(req)
-		retry, err := shouldRetry(ctx, err)
+		retry, err := shouldRetry(err)
 		if retry {
 			return true, err
 		}
 		if err != nil {
 			return false, err
 		}
-		if err := checkStatusCode(resp, 201); err != nil {
-			return shouldRetry(ctx, err)
+		if resp.StatusCode != 201 {
+			return false, fmt.Errorf("unexpected status code from upload create: %d", resp.StatusCode)
 		}
 		location = resp.Header.Get("location")
 		if location == "" {
@@ -320,7 +321,7 @@ func (f *Fs) sendUpload(ctx context.Context, location string, size int64, in io.
 		err = f.pacer.Call(func() (bool, error) {
 			fs.Debugf(f, "Sending zero length chunk")
 			_, fileID, err = f.transferChunk(ctx, location, 0, bytes.NewReader([]byte{}), 0)
-			return shouldRetry(ctx, err)
+			return shouldRetry(err)
 		})
 		return
 	}
@@ -344,13 +345,13 @@ func (f *Fs) sendUpload(ctx context.Context, location string, size int64, in io.
 				// Get file offset and seek to the position
 				offset, err := f.getServerOffset(ctx, location)
 				if err != nil {
-					return shouldRetry(ctx, err)
+					return shouldRetry(err)
 				}
 				sentBytes := offset - chunkStart
 				fs.Debugf(f, "sentBytes: %d", sentBytes)
 				_, err = chunk.Seek(sentBytes, io.SeekStart)
 				if err != nil {
-					return shouldRetry(ctx, err)
+					return shouldRetry(err)
 				}
 				transferOffset = offset
 				reqSize = chunkSize - sentBytes
@@ -367,7 +368,7 @@ func (f *Fs) sendUpload(ctx context.Context, location string, size int64, in io.
 				offsetMismatch = true
 				return true, errors.New("connection broken")
 			}
-			return shouldRetry(ctx, err)
+			return shouldRetry(err)
 		})
 		if err != nil {
 			return
@@ -427,19 +428,21 @@ func (f *Fs) transferChunk(ctx context.Context, location string, start int64, ch
 }
 
 func (f *Fs) makeUploadHeadRequest(ctx context.Context, location string) (*http.Request, error) {
-	req, err := http.NewRequestWithContext(ctx, "HEAD", location, nil)
+	req, err := http.NewRequest("HEAD", location, nil)
 	if err != nil {
 		return nil, err
 	}
+	req = req.WithContext(ctx) // go1.13 can use NewRequestWithContext
 	req.Header.Set("tus-resumable", "1.0.0")
 	return req, nil
 }
 
 func (f *Fs) makeUploadPatchRequest(ctx context.Context, location string, in io.Reader, offset, length int64) (*http.Request, error) {
-	req, err := http.NewRequestWithContext(ctx, "PATCH", location, in)
+	req, err := http.NewRequest("PATCH", location, in)
 	if err != nil {
 		return nil, err
 	}
+	req = req.WithContext(ctx) // go1.13 can use NewRequestWithContext
 	req.Header.Set("tus-resumable", "1.0.0")
 	req.Header.Set("upload-offset", strconv.FormatInt(offset, 10))
 	req.Header.Set("content-length", strconv.FormatInt(length, 10))
@@ -469,7 +472,7 @@ func (f *Fs) purgeCheck(ctx context.Context, dir string, check bool) (err error)
 	// check directory exists
 	directoryID, err := f.dirCache.FindDir(ctx, dir, false)
 	if err != nil {
-		return fmt.Errorf("Rmdir: %w", err)
+		return errors.Wrap(err, "Rmdir")
 	}
 	dirID := atoi(directoryID)
 
@@ -479,10 +482,10 @@ func (f *Fs) purgeCheck(ctx context.Context, dir string, check bool) (err error)
 		err = f.pacer.Call(func() (bool, error) {
 			// fs.Debugf(f, "listing files: %d", dirID)
 			children, _, err = f.client.Files.List(ctx, dirID)
-			return shouldRetry(ctx, err)
+			return shouldRetry(err)
 		})
 		if err != nil {
-			return fmt.Errorf("Rmdir: %w", err)
+			return errors.Wrap(err, "Rmdir")
 		}
 		if len(children) != 0 {
 			return errors.New("directory not empty")
@@ -493,7 +496,7 @@ func (f *Fs) purgeCheck(ctx context.Context, dir string, check bool) (err error)
 	err = f.pacer.Call(func() (bool, error) {
 		// fs.Debugf(f, "deleting file: %d", dirID)
 		err = f.client.Files.Delete(ctx, dirID)
-		return shouldRetry(ctx, err)
+		return shouldRetry(err)
 	})
 	f.dirCache.FlushDir(dir)
 	return err
@@ -523,9 +526,9 @@ func (f *Fs) Purge(ctx context.Context, dir string) (err error) {
 
 // Copy src to this remote using server-side copy operations.
 //
-// This is stored with the remote path given.
+// This is stored with the remote path given
 //
-// It returns the destination Object and a possible error.
+// It returns the destination Object and a possible error
 //
 // Will only be called if src.Fs().Name() == f.Name()
 //
@@ -552,7 +555,7 @@ func (f *Fs) Copy(ctx context.Context, src fs.Object, remote string) (o fs.Objec
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		// fs.Debugf(f, "copying file (%d) to parent_id: %s", srcObj.file.ID, directoryID)
 		_, err = f.client.Do(req, nil)
-		return shouldRetry(ctx, err)
+		return shouldRetry(err)
 	})
 	if err != nil {
 		return nil, err
@@ -562,9 +565,9 @@ func (f *Fs) Copy(ctx context.Context, src fs.Object, remote string) (o fs.Objec
 
 // Move src to this remote using server-side move operations.
 //
-// This is stored with the remote path given.
+// This is stored with the remote path given
 //
-// It returns the destination Object and a possible error.
+// It returns the destination Object and a possible error
 //
 // Will only be called if src.Fs().Name() == f.Name()
 //
@@ -591,7 +594,7 @@ func (f *Fs) Move(ctx context.Context, src fs.Object, remote string) (o fs.Objec
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		// fs.Debugf(f, "moving file (%d) to parent_id: %s", srcObj.file.ID, directoryID)
 		_, err = f.client.Do(req, nil)
-		return shouldRetry(ctx, err)
+		return shouldRetry(err)
 	})
 	if err != nil {
 		return nil, err
@@ -631,7 +634,7 @@ func (f *Fs) DirMove(ctx context.Context, src fs.Fs, srcRemote, dstRemote string
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		// fs.Debugf(f, "moving file (%s) to parent_id: %s", srcID, dstDirectoryID)
 		_, err = f.client.Do(req, nil)
-		return shouldRetry(ctx, err)
+		return shouldRetry(err)
 	})
 	srcFs.dirCache.FlushDir(srcRemote)
 	return err
@@ -644,10 +647,10 @@ func (f *Fs) About(ctx context.Context) (usage *fs.Usage, err error) {
 	err = f.pacer.Call(func() (bool, error) {
 		// fs.Debugf(f, "getting account info")
 		ai, err = f.client.Account.Info(ctx)
-		return shouldRetry(ctx, err)
+		return shouldRetry(err)
 	})
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "about failed")
 	}
 	return &fs.Usage{
 		Total: fs.NewUsageValue(ai.Disk.Size),  // quota of bytes that can be used
@@ -678,6 +681,6 @@ func (f *Fs) CleanUp(ctx context.Context) (err error) {
 		}
 		// fs.Debugf(f, "emptying trash")
 		_, err = f.client.Do(req, nil)
-		return shouldRetry(ctx, err)
+		return shouldRetry(err)
 	})
 }

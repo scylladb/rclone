@@ -15,17 +15,12 @@ import (
 	"github.com/rclone/rclone/lib/terminal"
 )
 
-const (
-	averagePeriodLength = time.Second
-	averageStopAfter    = time.Minute
-)
-
 // MaxCompletedTransfers specifies maximum number of completed transfers in startedTransfers list
 var MaxCompletedTransfers = 100
 
+var startTime = time.Now()
+
 // StatsInfo accounts all transfers
-// N.B.: if this struct is modified, please remember to also update sum() function in stats_groups
-// to correctly count the updated fields
 type StatsInfo struct {
 	mu                sync.RWMutex
 	ctx               context.Context
@@ -54,19 +49,6 @@ type StatsInfo struct {
 	oldTimeRanges     timeRanges    // a merged list of time ranges for the transfers
 	oldDuration       time.Duration // duration of transfers we have culled
 	group             string
-	startTime         time.Time // the moment these stats were initialized or reset
-	average           averageValues
-}
-
-type averageValues struct {
-	mu        sync.Mutex
-	lpBytes   int64
-	lpTime    time.Time
-	speed     float64
-	stop      chan bool
-	stopped   sync.WaitGroup
-	startOnce sync.Once
-	stopOnce  sync.Once
 }
 
 // NewStats creates an initialised StatsInfo
@@ -78,26 +60,14 @@ func NewStats(ctx context.Context) *StatsInfo {
 		checking:     newTransferMap(ci.Checkers, "checking"),
 		transferring: newTransferMap(ci.Transfers, "transferring"),
 		inProgress:   newInProgress(ctx),
-		startTime:    time.Now(),
-		average:      averageValues{stop: make(chan bool)},
 	}
 }
 
 // RemoteStats returns stats for rc
 func (s *StatsInfo) RemoteStats() (out rc.Params, err error) {
-	// NB if adding values here - make sure you update the docs in
-	// stats_groups.go
-
 	out = make(rc.Params)
-
-	ts := s.calculateTransferStats()
-	out["totalChecks"] = ts.totalChecks
-	out["totalTransfers"] = ts.totalTransfers
-	out["totalBytes"] = ts.totalBytes
-	out["transferTime"] = ts.transferTime
-	out["speed"] = ts.speed
-
 	s.mu.RLock()
+	out["speed"] = s.Speed()
 	out["bytes"] = s.bytes
 	out["errors"] = s.errors
 	out["fatalError"] = s.fatalError
@@ -107,15 +77,9 @@ func (s *StatsInfo) RemoteStats() (out rc.Params, err error) {
 	out["deletes"] = s.deletes
 	out["deletedDirs"] = s.deletedDirs
 	out["renames"] = s.renames
-	out["elapsedTime"] = time.Since(s.startTime).Seconds()
-	eta, etaOK := eta(s.bytes, ts.totalBytes, ts.speed)
-	if etaOK {
-		out["eta"] = eta.Seconds()
-	} else {
-		out["eta"] = nil
-	}
+	out["transferTime"] = s.totalDuration().Seconds()
+	out["elapsedTime"] = time.Since(startTime).Seconds()
 	s.mu.RUnlock()
-
 	if !s.checking.empty() {
 		out["checking"] = s.checking.remotes()
 	}
@@ -125,14 +89,11 @@ func (s *StatsInfo) RemoteStats() (out rc.Params, err error) {
 	if s.errors > 0 {
 		out["lastError"] = s.lastError.Error()
 	}
-
 	return out, nil
 }
 
-// speed returns the average speed of the transfer in bytes/second
-//
-// Call with lock held
-func (s *StatsInfo) speed() float64 {
+// Speed returns the average speed of the transfer in bytes/second
+func (s *StatsInfo) Speed() float64 {
 	dt := s.totalDuration()
 	dtSeconds := dt.Seconds()
 	speed := 0.0
@@ -229,11 +190,6 @@ func (s *StatsInfo) totalDuration() time.Duration {
 	return s.oldDuration + timeRanges.total()
 }
 
-const (
-	etaMaxSeconds = (1<<63 - 1) / int64(time.Second)           // Largest possible ETA as number of seconds
-	etaMax        = time.Duration(etaMaxSeconds) * time.Second // Largest possible ETA, which is in second precision, representing "292y24w3d23h47m16s"
-)
-
 // eta returns the ETA of the current operation,
 // rounded to full seconds.
 // If the ETA cannot be determined 'ok' returns false.
@@ -245,17 +201,8 @@ func eta(size, total int64, rate float64) (eta time.Duration, ok bool) {
 	if remaining < 0 {
 		return 0, false
 	}
-	seconds := int64(float64(remaining) / rate)
-	if seconds < 0 {
-		// Got Int64 overflow
-		eta = etaMax
-	} else if seconds >= etaMaxSeconds {
-		// Would get Int64 overflow if converting from seconds to Duration (nanoseconds)
-		eta = etaMax
-	} else {
-		eta = time.Duration(seconds) * time.Second
-	}
-	return eta, true
+	seconds := float64(remaining) / rate
+	return time.Second * time.Duration(seconds), true
 }
 
 // etaString returns the ETA of the current operation,
@@ -266,10 +213,7 @@ func etaString(done, total int64, rate float64) string {
 	if !ok {
 		return "-"
 	}
-	if d == etaMax {
-		return "-"
-	}
-	return fs.Duration(d).ShortReadableString()
+	return fs.Duration(d).ReadableString()
 }
 
 // percent returns a/b as a percentage rounded to the nearest integer
@@ -283,119 +227,50 @@ func percent(a int64, b int64) string {
 	return fmt.Sprintf("%d%%", int(float64(a)*100/float64(b)+0.5))
 }
 
-// returned from calculateTransferStats
-type transferStats struct {
-	totalChecks    int64
-	totalTransfers int64
-	totalBytes     int64
-	transferTime   float64
-	speed          float64
-}
-
-// calculateTransferStats calculates some additional transfer stats not
-// stored directly in StatsInfo
-func (s *StatsInfo) calculateTransferStats() (ts transferStats) {
+// String convert the StatsInfo to a string for printing
+func (s *StatsInfo) String() string {
 	// checking and transferring have their own locking so read
 	// here before lock to prevent deadlock on GetBytes
 	transferring, checking := s.transferring.count(), s.checking.count()
 	transferringBytesDone, transferringBytesTotal := s.transferring.progress(s)
 
 	s.mu.RLock()
-	defer s.mu.RUnlock()
 
-	ts.totalChecks = int64(s.checkQueue) + s.checks + int64(checking)
-	ts.totalTransfers = int64(s.transferQueue) + s.transfers + int64(transferring)
-	// note that s.bytes already includes transferringBytesDone so
-	// we take it off here to avoid double counting
-	ts.totalBytes = s.transferQueueSize + s.bytes + transferringBytesTotal - transferringBytesDone
-	ts.speed = s.average.speed
-
-	return ts
-}
-
-func (s *StatsInfo) averageLoop() {
-	var period float64
-
-	ticker := time.NewTicker(averagePeriodLength)
-	defer ticker.Stop()
-
-	startTime := time.Now()
-	a := &s.average
-	defer a.stopped.Done()
-	for {
-		select {
-		case now := <-ticker.C:
-			a.mu.Lock()
-			var elapsed float64
-			if a.lpTime.IsZero() {
-				elapsed = now.Sub(startTime).Seconds()
-			} else {
-				elapsed = now.Sub(a.lpTime).Seconds()
-			}
-			avg := 0.0
-			if elapsed > 0 {
-				avg = float64(a.lpBytes) / elapsed
-			}
-			if period < averagePeriod {
-				period++
-			}
-			a.speed = (avg + a.speed*(period-1)) / period
-			a.lpBytes = 0
-			a.lpTime = now
-			a.mu.Unlock()
-		case <-a.stop:
-			return
-		}
+	elapsedTime := time.Since(startTime)
+	elapsedTimeSecondsOnly := elapsedTime.Truncate(time.Second/10) % time.Minute
+	dt := s.totalDuration()
+	dtSeconds := dt.Seconds()
+	speed := 0.0
+	if dt > 0 {
+		speed = float64(s.bytes) / dtSeconds
 	}
-}
 
-func (s *StatsInfo) startAverageLoop() {
-	s.average.startOnce.Do(func() {
-		s.average.stopped.Add(1)
-		go s.averageLoop()
-	})
-}
-
-func (s *StatsInfo) stopAverageLoop() {
-	s.average.stopOnce.Do(func() {
-		close(s.average.stop)
-		s.average.stopped.Wait()
-	})
-}
-
-// String convert the StatsInfo to a string for printing
-func (s *StatsInfo) String() string {
-	// NB if adding more stats in here, remember to add them into
-	// RemoteStats() too.
-
-	ts := s.calculateTransferStats()
-
-	s.mu.RLock()
+	displaySpeed := speed
+	if s.ci.DataRateUnit == "bits" {
+		displaySpeed *= 8
+	}
 
 	var (
-		buf                    = &bytes.Buffer{}
-		xfrchkString           = ""
-		dateString             = ""
-		elapsedTime            = time.Since(s.startTime)
-		elapsedTimeSecondsOnly = elapsedTime.Truncate(time.Second/10) % time.Minute
-		displaySpeedString     string
+		totalChecks   = int64(s.checkQueue) + s.checks + int64(checking)
+		totalTransfer = int64(s.transferQueue) + s.transfers + int64(transferring)
+		// note that s.bytes already includes transferringBytesDone so
+		// we take it off here to avoid double counting
+		totalSize    = s.transferQueueSize + s.bytes + transferringBytesTotal - transferringBytesDone
+		currentSize  = s.bytes
+		buf          = &bytes.Buffer{}
+		xfrchkString = ""
+		dateString   = ""
 	)
-
-	if s.ci.DataRateUnit == "bits" {
-		displaySpeedString = fs.SizeSuffix(ts.speed * 8).BitRateUnit()
-	} else {
-		displaySpeedString = fs.SizeSuffix(ts.speed).ByteRateUnit()
-	}
 
 	if !s.ci.StatsOneLine {
 		_, _ = fmt.Fprintf(buf, "\nTransferred:   	")
 	} else {
 		xfrchk := []string{}
-		if ts.totalTransfers > 0 && s.transferQueue > 0 {
-			xfrchk = append(xfrchk, fmt.Sprintf("xfr#%d/%d", s.transfers, ts.totalTransfers))
+		if totalTransfer > 0 && s.transferQueue > 0 {
+			xfrchk = append(xfrchk, fmt.Sprintf("xfr#%d/%d", s.transfers, totalTransfer))
 		}
-		if ts.totalChecks > 0 && s.checkQueue > 0 {
-			xfrchk = append(xfrchk, fmt.Sprintf("chk#%d/%d", s.checks, ts.totalChecks))
+		if totalChecks > 0 && s.checkQueue > 0 {
+			xfrchk = append(xfrchk, fmt.Sprintf("chk#%d/%d", s.checks, totalChecks))
 		}
 		if len(xfrchk) > 0 {
 			xfrchkString = fmt.Sprintf(" (%s)", strings.Join(xfrchk, ", "))
@@ -406,19 +281,19 @@ func (s *StatsInfo) String() string {
 		}
 	}
 
-	_, _ = fmt.Fprintf(buf, "%s%13s / %s, %s, %s, ETA %s%s",
+	_, _ = fmt.Fprintf(buf, "%s%10s / %s, %s, %s, ETA %s%s",
 		dateString,
-		fs.SizeSuffix(s.bytes).ByteUnit(),
-		fs.SizeSuffix(ts.totalBytes).ByteUnit(),
-		percent(s.bytes, ts.totalBytes),
-		displaySpeedString,
-		etaString(s.bytes, ts.totalBytes, ts.speed),
+		fs.SizeSuffix(s.bytes),
+		fs.SizeSuffix(totalSize).Unit("Bytes"),
+		percent(s.bytes, totalSize),
+		fs.SizeSuffix(displaySpeed).Unit(strings.Title(s.ci.DataRateUnit)+"/s"),
+		etaString(currentSize, totalSize, speed),
 		xfrchkString,
 	)
 
 	if s.ci.ProgressTerminalTitle {
 		// Writes ETA to the terminal title
-		terminal.WriteTerminalTitle("ETA: " + etaString(s.bytes, ts.totalBytes, ts.speed))
+		terminal.WriteTerminalTitle("ETA: " + etaString(currentSize, totalSize, speed))
 	}
 
 	if !s.ci.StatsOneLine {
@@ -439,9 +314,9 @@ func (s *StatsInfo) String() string {
 			_, _ = fmt.Fprintf(buf, "Errors:        %10d%s\n",
 				s.errors, errorDetails)
 		}
-		if s.checks != 0 || ts.totalChecks != 0 {
+		if s.checks != 0 || totalChecks != 0 {
 			_, _ = fmt.Fprintf(buf, "Checks:        %10d / %d, %s\n",
-				s.checks, ts.totalChecks, percent(s.checks, ts.totalChecks))
+				s.checks, totalChecks, percent(s.checks, totalChecks))
 		}
 		if s.deletes != 0 || s.deletedDirs != 0 {
 			_, _ = fmt.Fprintf(buf, "Deleted:       %10d (files), %d (dirs)\n", s.deletes, s.deletedDirs)
@@ -449,11 +324,11 @@ func (s *StatsInfo) String() string {
 		if s.renames != 0 {
 			_, _ = fmt.Fprintf(buf, "Renamed:       %10d\n", s.renames)
 		}
-		if s.transfers != 0 || ts.totalTransfers != 0 {
+		if s.transfers != 0 || totalTransfer != 0 {
 			_, _ = fmt.Fprintf(buf, "Transferred:   %10d / %d, %s\n",
-				s.transfers, ts.totalTransfers, percent(s.transfers, ts.totalTransfers))
+				s.transfers, totalTransfer, percent(s.transfers, totalTransfer))
 		}
-		_, _ = fmt.Fprintf(buf, "Elapsed time:  %10ss\n", strings.TrimRight(fs.Duration(elapsedTime.Truncate(time.Minute)).ReadableString(), "0s")+fmt.Sprintf("%.1f", elapsedTimeSecondsOnly.Seconds()))
+		_, _ = fmt.Fprintf(buf, "Elapsed time:  %10ss\n", strings.TrimRight(elapsedTime.Truncate(time.Minute).String(), "0s")+fmt.Sprintf("%.1f", elapsedTimeSecondsOnly.Seconds()))
 	}
 
 	// checking and transferring have their own locking so unlock
@@ -493,7 +368,7 @@ func (s *StatsInfo) Transferred() []TransferSnapshot {
 func (s *StatsInfo) Log() {
 	if s.ci.UseJSONLog {
 		out, _ := s.RemoteStats()
-		fs.LogLevelPrintf(s.ci.StatsLogLevel, nil, "%v%v\n", s, fs.LogValueHide("stats", out))
+		fs.LogLevelPrintf(s.ci.StatsLogLevel, nil, "%v%v\n", s, fs.LogValue("stats", out))
 	} else {
 		fs.LogLevelPrintf(s.ci.StatsLogLevel, nil, "%v\n", s)
 	}
@@ -502,10 +377,6 @@ func (s *StatsInfo) Log() {
 
 // Bytes updates the stats for bytes bytes
 func (s *StatsInfo) Bytes(bytes int64) {
-	s.average.mu.Lock()
-	s.average.lpBytes += bytes
-	s.average.mu.Unlock()
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.bytes += bytes
@@ -631,9 +502,6 @@ func (s *StatsInfo) ResetCounters() {
 	s.renames = 0
 	s.startedTransfers = nil
 	s.oldDuration = 0
-
-	s.stopAverageLoop()
-	s.average = averageValues{stop: make(chan bool)}
 }
 
 // ResetErrors sets the errors count to 0 and resets lastError, fatalError and retryError
@@ -689,8 +557,8 @@ func (s *StatsInfo) RetryAfter() time.Time {
 }
 
 // NewCheckingTransfer adds a checking transfer to the stats, from the object.
-func (s *StatsInfo) NewCheckingTransfer(obj fs.DirEntry, what string) *Transfer {
-	tr := newCheckingTransfer(s, obj, what)
+func (s *StatsInfo) NewCheckingTransfer(obj fs.Object) *Transfer {
+	tr := newCheckingTransfer(s, obj)
 	s.checking.add(tr)
 	return tr
 }
@@ -711,33 +579,28 @@ func (s *StatsInfo) GetTransfers() int64 {
 }
 
 // NewTransfer adds a transfer to the stats from the object.
-func (s *StatsInfo) NewTransfer(obj fs.DirEntry) *Transfer {
+func (s *StatsInfo) NewTransfer(obj fs.Object) *Transfer {
 	tr := newTransfer(s, obj)
 	s.transferring.add(tr)
-	s.startAverageLoop()
 	return tr
 }
 
 // NewTransferRemoteSize adds a transfer to the stats based on remote and size.
 func (s *StatsInfo) NewTransferRemoteSize(remote string, size int64) *Transfer {
-	tr := newTransferRemoteSize(s, remote, size, false, "")
+	tr := newTransferRemoteSize(s, remote, size, false)
 	s.transferring.add(tr)
-	s.startAverageLoop()
 	return tr
 }
 
 // DoneTransferring removes a transfer from the stats
 //
-// if ok is true and it was in the transfermap (to avoid incrementing in case of nested calls, #6213) then it increments the transfers count
+// if ok is true then it increments the transfers count
 func (s *StatsInfo) DoneTransferring(remote string, ok bool) {
-	existed := s.transferring.del(remote)
-	if ok && existed {
+	s.transferring.del(remote)
+	if ok {
 		s.mu.Lock()
 		s.transfers++
 		s.mu.Unlock()
-	}
-	if s.transferring.empty() {
-		time.AfterFunc(averageStopAfter, s.stopAverageLoop)
 	}
 }
 

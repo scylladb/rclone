@@ -1,4 +1,5 @@
-// Package api provides types used by the OneDrive API.
+// Types passed and returned to and from the API
+
 package api
 
 import (
@@ -13,7 +14,7 @@ const (
 	PackageTypeOneNote = "oneNote"
 )
 
-// Error is returned from OneDrive when things go wrong
+// Error is returned from one drive when things go wrong
 type Error struct {
 	ErrorInfo struct {
 		Code       string `json:"code"`
@@ -70,7 +71,7 @@ type Drive struct {
 	Quota     Quota       `json:"quota"`
 }
 
-// Timestamp represents date and time information for the
+// Timestamp represents represents date and time information for the
 // OneDrive API, by using ISO 8601 and is always in UTC time.
 type Timestamp time.Time
 
@@ -126,7 +127,6 @@ type HashesType struct {
 	Sha1Hash     string `json:"sha1Hash"`     // hex encoded SHA1 hash for the contents of the file (if available)
 	Crc32Hash    string `json:"crc32Hash"`    // hex encoded CRC32 value of the file (if available)
 	QuickXorHash string `json:"quickXorHash"` // base64 encoded QuickXorHash value of the file (if available)
-	Sha256Hash   string `json:"sha256Hash"`   // hex encoded SHA256 value of the file (if available)
 }
 
 // FileFacet groups file-related data on OneDrive into a single structure.
@@ -250,16 +250,14 @@ type MoveItemRequest struct {
 	FileSystemInfo  *FileSystemInfoFacet `json:"fileSystemInfo,omitempty"`  // File system information on client. Read-write.
 }
 
-// CreateShareLinkRequest is the request to create a sharing link
-// Always Type:view and Scope:anonymous for public sharing
+//CreateShareLinkRequest is the request to create a sharing link
+//Always Type:view and Scope:anonymous for public sharing
 type CreateShareLinkRequest struct {
-	Type     string     `json:"type"`                         // Link type in View, Edit or Embed
-	Scope    string     `json:"scope,omitempty"`              // Scope in anonymous, organization
-	Password string     `json:"password,omitempty"`           // The password of the sharing link that is set by the creator. Optional and OneDrive Personal only.
-	Expiry   *time.Time `json:"expirationDateTime,omitempty"` // A String with format of yyyy-MM-ddTHH:mm:ssZ of DateTime indicates the expiration time of the permission.
+	Type  string `json:"type"`            //Link type in View, Edit or Embed
+	Scope string `json:"scope,omitempty"` //Optional. Scope in anonymous, organization
 }
 
-// CreateShareLinkResponse is the response from CreateShareLinkRequest
+//CreateShareLinkResponse is the response from CreateShareLinkRequest
 type CreateShareLinkResponse struct {
 	ID    string   `json:"id"`
 	Roles []string `json:"roles"`
@@ -283,7 +281,6 @@ type CreateShareLinkResponse struct {
 type AsyncOperationStatus struct {
 	PercentageComplete float64 `json:"percentageComplete"` // A float value between 0 and 100 that indicates the percentage complete.
 	Status             string  `json:"status"`             // A string value that maps to an enumeration of possible values about the status of the job. "notStarted | inProgress | completed | updating | failed | deletePending | deleteFailed | waiting"
-	ErrorCode          string  `json:"errorCode"`          // Not officially documented :(
 }
 
 // GetID returns a normalized ID of the item
@@ -292,7 +289,7 @@ type AsyncOperationStatus struct {
 func (i *Item) GetID() string {
 	if i.IsRemote() && i.RemoteItem.ID != "" {
 		return i.RemoteItem.ParentReference.DriveID + "#" + i.RemoteItem.ID
-	} else if i.ParentReference != nil && !strings.Contains(i.ID, "#") {
+	} else if i.ParentReference != nil && strings.Index(i.ID, "#") == -1 {
 		return i.ParentReference.DriveID + "#" + i.ID
 	}
 	return i.ID

@@ -8,7 +8,6 @@ package cmd
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -22,10 +21,11 @@ import (
 	"sync"
 	"time"
 
+	systemd "github.com/iguanesolutions/go-systemd/v5"
+	"github.com/pkg/errors"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/accounting"
 	"github.com/rclone/rclone/fs/cache"
-	"github.com/rclone/rclone/fs/config/configfile"
 	"github.com/rclone/rclone/fs/config/configflags"
 	"github.com/rclone/rclone/fs/config/flags"
 	"github.com/rclone/rclone/fs/filter"
@@ -36,8 +36,6 @@ import (
 	"github.com/rclone/rclone/fs/rc/rcflags"
 	"github.com/rclone/rclone/fs/rc/rcserver"
 	"github.com/rclone/rclone/lib/atexit"
-	"github.com/rclone/rclone/lib/buildinfo"
-	"github.com/rclone/rclone/lib/exitcode"
 	"github.com/rclone/rclone/lib/random"
 	"github.com/rclone/rclone/lib/terminal"
 	"github.com/spf13/cobra"
@@ -49,11 +47,11 @@ var (
 	// Flags
 	cpuProfile      = flags.StringP("cpuprofile", "", "", "Write cpu profile to file")
 	memProfile      = flags.StringP("memprofile", "", "", "Write memory profile to file")
-	statsInterval   = flags.DurationP("stats", "", time.Minute*1, "Interval between printing stats, e.g. 500ms, 60s, 5m (0 to disable)")
-	dataRateUnit    = flags.StringP("stats-unit", "", "bytes", "Show data rate in stats as either 'bits' or 'bytes' per second")
+	statsInterval   = flags.DurationP("stats", "", time.Minute*1, "Interval between printing stats, e.g 500ms, 60s, 5m. (0 to disable)")
+	dataRateUnit    = flags.StringP("stats-unit", "", "bytes", "Show data rate in stats as either 'bits' or 'bytes'/s")
 	version         bool
 	retries         = flags.IntP("retries", "", 3, "Retry operations this many times if they fail")
-	retriesInterval = flags.DurationP("retries-sleep", "", 0, "Interval between retrying operations if they fail, e.g. 500ms, 60s, 5m (0 to disable)")
+	retriesInterval = flags.DurationP("retries-sleep", "", 0, "Interval between retrying operations if they fail, e.g 500ms, 60s, 5m. (0 to disable)")
 	// Errors
 	errorCommandNotFound    = errors.New("command not found")
 	errorUncategorized      = errors.New("uncategorized error")
@@ -61,28 +59,24 @@ var (
 	errorTooManyArguments   = errors.New("too many arguments")
 )
 
+const (
+	exitCodeSuccess = iota
+	exitCodeUsageError
+	exitCodeUncategorizedError
+	exitCodeDirNotFound
+	exitCodeFileNotFound
+	exitCodeRetryError
+	exitCodeNoRetryError
+	exitCodeFatalError
+	exitCodeTransferExceeded
+	exitCodeNoFilesTransferred
+)
+
 // ShowVersion prints the version to stdout
 func ShowVersion() {
-	osVersion, osKernel := buildinfo.GetOSVersion()
-	if osVersion == "" {
-		osVersion = "unknown"
-	}
-	if osKernel == "" {
-		osKernel = "unknown"
-	}
-
-	linking, tagString := buildinfo.GetLinkingAndTags()
-
-	arch := buildinfo.GetArch()
-
 	fmt.Printf("rclone %s\n", fs.Version)
-	fmt.Printf("- os/version: %s\n", osVersion)
-	fmt.Printf("- os/kernel: %s\n", osKernel)
-	fmt.Printf("- os/type: %s\n", runtime.GOOS)
-	fmt.Printf("- os/arch: %s\n", arch)
-	fmt.Printf("- go/version: %s\n", runtime.Version())
-	fmt.Printf("- go/linking: %s\n", linking)
-	fmt.Printf("- go/tags: %s\n", tagString)
+	fmt.Printf("- os/arch: %s/%s\n", runtime.GOOS, runtime.GOARCH)
+	fmt.Printf("- go version: %s\n", runtime.Version())
 }
 
 // NewFsFile creates an Fs from a name but may point to a file.
@@ -90,7 +84,7 @@ func ShowVersion() {
 // It returns a string with the file name if points to a file
 // otherwise "".
 func NewFsFile(remote string) (fs.Fs, string) {
-	_, fsPath, err := fspath.SplitFs(remote)
+	_, _, fsPath, err := fs.ParseRemote(remote)
 	if err != nil {
 		err = fs.CountError(err)
 		log.Fatalf("Failed to create file system for %q: %v", remote, err)
@@ -119,7 +113,7 @@ func newFsFileAddFilter(remote string) (fs.Fs, string) {
 	f, fileName := NewFsFile(remote)
 	if fileName != "" {
 		if !fi.InActive() {
-			err := fmt.Errorf("can't limit to single files when using filters: %v", remote)
+			err := errors.Errorf("Can't limit to single files when using filters: %v", remote)
 			err = fs.CountError(err)
 			log.Fatalf(err.Error())
 		}
@@ -271,11 +265,11 @@ func Run(Retry bool, showStats bool, cmd *cobra.Command, f func() error) {
 			break
 		}
 		if accounting.GlobalStats().Errored() && !accounting.GlobalStats().HadRetryError() {
-			fs.Errorf(nil, "Can't retry any of the errors - not attempting retries")
+			fs.Errorf(nil, "Can't retry this error - not attempting retries")
 			break
 		}
 		if retryAfter := accounting.GlobalStats().RetryAfter(); !retryAfter.IsZero() {
-			d := time.Until(retryAfter)
+			d := retryAfter.Sub(time.Now())
 			if d > 0 {
 				fs.Logf(nil, "Received retry after error - sleeping until %s (%v)", retryAfter.Format(time.RFC3339Nano), d)
 				time.Sleep(d)
@@ -321,12 +315,6 @@ func Run(Retry bool, showStats bool, cmd *cobra.Command, f func() error) {
 		if err != nil {
 			fs.Errorf(nil, "Failed to list open files: %v", err)
 		}
-	}
-
-	// clear cache and shutdown backends
-	cache.Clear()
-	if lastErr := accounting.GlobalStats().GetLastError(); cmdErr == nil {
-		cmdErr = lastErr
 	}
 
 	// Log the final error message and exit
@@ -388,23 +376,17 @@ func StartStats() func() {
 func initConfig() {
 	ctx := context.Background()
 	ci := fs.GetConfig(ctx)
+	// Activate logger systemd support if systemd invocation ID is detected
+	_, sysdLaunch := systemd.GetInvocationID()
+	if sysdLaunch {
+		ci.LogSystemdSupport = true // used during fslog.InitLogging()
+	}
 
 	// Start the logger
 	fslog.InitLogging()
 
 	// Finish parsing any command line flags
 	configflags.SetFlags(ci)
-
-	// Load the config
-	configfile.Install()
-
-	// Start accounting
-	accounting.Start(ctx)
-
-	// Hide console window
-	if ci.NoConsole {
-		terminal.HideConsole()
-	}
 
 	// Load filters
 	err := filterflags.Reload(ctx)
@@ -416,8 +398,10 @@ func initConfig() {
 	fs.Debugf("rclone", "Version %q starting with parameters %q", fs.Version, os.Args)
 
 	// Inform user about systemd log support now that we have a logger
-	if fslog.Opt.LogSystemdSupport {
-		fs.Debugf("rclone", "systemd logging support activated")
+	if sysdLaunch {
+		fs.Debugf("rclone", "systemd logging support automatically activated")
+	} else if ci.LogSystemdSupport {
+		fs.Debugf("rclone", "systemd logging support manually activated")
 	}
 
 	// Start the remote control server if configured
@@ -466,7 +450,7 @@ func initConfig() {
 		})
 	}
 
-	if m, _ := regexp.MatchString("^(bits|bytes)$", *dataRateUnit); !m {
+	if m, _ := regexp.MatchString("^(bits|bytes)$", *dataRateUnit); m == false {
 		fs.Errorf(nil, "Invalid unit passed to --stats-unit. Defaulting to bytes.")
 		ci.DataRateUnit = "bytes"
 	} else {
@@ -480,29 +464,31 @@ func resolveExitCode(err error) {
 	if err == nil {
 		if ci.ErrorOnNoTransfer {
 			if accounting.GlobalStats().GetTransfers() == 0 {
-				os.Exit(exitcode.NoFilesTransferred)
+				os.Exit(exitCodeNoFilesTransferred)
 			}
 		}
-		os.Exit(exitcode.Success)
+		os.Exit(exitCodeSuccess)
 	}
 
+	_, unwrapped := fserrors.Cause(err)
+
 	switch {
-	case errors.Is(err, fs.ErrorDirNotFound):
-		os.Exit(exitcode.DirNotFound)
-	case errors.Is(err, fs.ErrorObjectNotFound):
-		os.Exit(exitcode.FileNotFound)
-	case errors.Is(err, errorUncategorized):
-		os.Exit(exitcode.UncategorizedError)
-	case errors.Is(err, accounting.ErrorMaxTransferLimitReached):
-		os.Exit(exitcode.TransferExceeded)
+	case unwrapped == fs.ErrorDirNotFound:
+		os.Exit(exitCodeDirNotFound)
+	case unwrapped == fs.ErrorObjectNotFound:
+		os.Exit(exitCodeFileNotFound)
+	case unwrapped == errorUncategorized:
+		os.Exit(exitCodeUncategorizedError)
+	case unwrapped == accounting.ErrorMaxTransferLimitReached:
+		os.Exit(exitCodeTransferExceeded)
 	case fserrors.ShouldRetry(err):
-		os.Exit(exitcode.RetryError)
-	case fserrors.IsNoRetryError(err), fserrors.IsNoLowLevelRetryError(err):
-		os.Exit(exitcode.NoRetryError)
+		os.Exit(exitCodeRetryError)
+	case fserrors.IsNoRetryError(err):
+		os.Exit(exitCodeNoRetryError)
 	case fserrors.IsFatalError(err):
-		os.Exit(exitcode.FatalError)
+		os.Exit(exitCodeFatalError)
 	default:
-		os.Exit(exitcode.UsageError)
+		os.Exit(exitCodeUsageError)
 	}
 }
 
@@ -529,12 +515,11 @@ func AddBackendFlags() {
 				if nl := strings.IndexRune(help, '\n'); nl >= 0 {
 					help = help[:nl]
 				}
-				help = strings.TrimRight(strings.TrimSpace(help), ".!?")
+				help = strings.TrimSpace(help)
 				if opt.IsPassword {
 					help += " (obscured)"
 				}
-				flag := pflag.CommandLine.VarPF(opt, name, opt.ShortOpt, help)
-				flags.SetDefaultFromEnv(pflag.CommandLine, name)
+				flag := flags.VarPF(pflag.CommandLine, opt, name, opt.ShortOpt, help)
 				if _, isBool := opt.Default.(bool); isBool {
 					flag.NoOptDefVal = "true"
 				}
@@ -559,9 +544,6 @@ func Main() {
 	setupRootCommand(Root)
 	AddBackendFlags()
 	if err := Root.Execute(); err != nil {
-		if strings.HasPrefix(err.Error(), "unknown command") && selfupdateEnabled {
-			Root.PrintErrf("You could use '%s selfupdate' to get latest features.\n\n", Root.CommandPath())
-		}
 		log.Fatalf("Fatal error: %v", err)
 	}
 }

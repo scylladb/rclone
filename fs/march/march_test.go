@@ -170,6 +170,7 @@ func TestMarch(t *testing.T) {
 	} {
 		t.Run(fmt.Sprintf("TestMarch-%s", test.what), func(t *testing.T) {
 			r := fstest.NewRun(t)
+			defer r.Finalise()
 
 			var srcOnly []fstest.Item
 			var dstOnly []fstest.Item
@@ -241,6 +242,7 @@ func TestMarchNoTraverse(t *testing.T) {
 	} {
 		t.Run(fmt.Sprintf("TestMarch-%s", test.what), func(t *testing.T) {
 			r := fstest.NewRun(t)
+			defer r.Finalise()
 
 			var srcOnly []fstest.Item
 			var match []fstest.Item

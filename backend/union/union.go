@@ -1,10 +1,8 @@
-// Package union implements a virtual provider to join existing remotes.
 package union
 
 import (
 	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"path"
@@ -13,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/rclone/rclone/backend/union/common"
+	"github.com/pkg/errors"
 	"github.com/rclone/rclone/backend/union/policy"
 	"github.com/rclone/rclone/backend/union/upstream"
 	"github.com/rclone/rclone/fs"
@@ -30,47 +28,50 @@ func init() {
 		Name:        "union",
 		Description: "Union merges the contents of several upstream fs",
 		NewFs:       NewFs,
-		MetadataInfo: &fs.MetadataInfo{
-			Help: `Any metadata supported by the underlying remote is read and written.`,
-		},
 		Options: []fs.Option{{
 			Name:     "upstreams",
-			Help:     "List of space separated upstreams.\n\nCan be 'upstreama:test/dir upstreamb:', '\"upstreama:test/space:ro dir\" upstreamb:', etc.",
+			Help:     "List of space separated upstreams.\nCan be 'upstreama:test/dir upstreamb:', '\"upstreama:test/space:ro dir\" upstreamb:', etc.\n",
 			Required: true,
 		}, {
-			Name:    "action_policy",
-			Help:    "Policy to choose upstream on ACTION category.",
-			Default: "epall",
+			Name:     "action_policy",
+			Help:     "Policy to choose upstream on ACTION category.",
+			Required: true,
+			Default:  "epall",
 		}, {
-			Name:    "create_policy",
-			Help:    "Policy to choose upstream on CREATE category.",
-			Default: "epmfs",
+			Name:     "create_policy",
+			Help:     "Policy to choose upstream on CREATE category.",
+			Required: true,
+			Default:  "epmfs",
 		}, {
-			Name:    "search_policy",
-			Help:    "Policy to choose upstream on SEARCH category.",
-			Default: "ff",
+			Name:     "search_policy",
+			Help:     "Policy to choose upstream on SEARCH category.",
+			Required: true,
+			Default:  "ff",
 		}, {
-			Name:    "cache_time",
-			Help:    "Cache time of usage and free space (in seconds).\n\nThis option is only useful when a path preserving policy is used.",
-			Default: 120,
-		}, {
-			Name: "min_free_space",
-			Help: `Minimum viable free space for lfs/eplfs policies.
-
-If a remote has less than this much free space then it won't be
-considered for use in lfs or eplfs policies.`,
-			Advanced: true,
-			Default:  fs.Gibi,
+			Name:     "cache_time",
+			Help:     "Cache time of usage and free space (in seconds). This option is only useful when a path preserving policy is used.",
+			Required: true,
+			Default:  120,
 		}},
 	}
 	fs.Register(fsi)
+}
+
+// Options defines the configuration for this backend
+type Options struct {
+	Upstreams    fs.SpaceSepList `config:"upstreams"`
+	Remotes      fs.SpaceSepList `config:"remotes"` // Deprecated
+	ActionPolicy string          `config:"action_policy"`
+	CreatePolicy string          `config:"create_policy"`
+	SearchPolicy string          `config:"search_policy"`
+	CacheTime    int             `config:"cache_time"`
 }
 
 // Fs represents a union of upstreams
 type Fs struct {
 	name         string         // name of this remote
 	features     *fs.Features   // optional features
-	opt          common.Options // options for this Fs
+	opt          Options        // options for this Fs
 	root         string         // the path we are working on
 	upstreams    []*upstream.Fs // slice of upstreams
 	hashSet      hash.Set       // intersection of hash types
@@ -85,20 +86,20 @@ func (f *Fs) wrapEntries(entries ...upstream.Entry) (entry, error) {
 	if err != nil {
 		return nil, err
 	}
-	switch e := e.(type) {
+	switch e.(type) {
 	case *upstream.Object:
 		return &Object{
-			Object: e,
+			Object: e.(*upstream.Object),
 			fs:     f,
 			co:     entries,
 		}, nil
 	case *upstream.Directory:
 		return &Directory{
-			Directory: e,
+			Directory: e.(*upstream.Directory),
 			cd:        entries,
 		}, nil
 	default:
-		return nil, fmt.Errorf("unknown object type %T", e)
+		return nil, errors.Errorf("unknown object type %T", e)
 	}
 }
 
@@ -131,9 +132,7 @@ func (f *Fs) Rmdir(ctx context.Context, dir string) error {
 	errs := Errors(make([]error, len(upstreams)))
 	multithread(len(upstreams), func(i int) {
 		err := upstreams[i].Rmdir(ctx, dir)
-		if err != nil {
-			errs[i] = fmt.Errorf("%s: %w", upstreams[i].Name(), err)
-		}
+		errs[i] = errors.Wrap(err, upstreams[i].Name())
 	})
 	return errs.Err()
 }
@@ -143,43 +142,29 @@ func (f *Fs) Hashes() hash.Set {
 	return f.hashSet
 }
 
-// mkdir makes the directory passed in and returns the upstreams used
-func (f *Fs) mkdir(ctx context.Context, dir string) ([]*upstream.Fs, error) {
+// Mkdir makes the root directory of the Fs object
+func (f *Fs) Mkdir(ctx context.Context, dir string) error {
 	upstreams, err := f.create(ctx, dir)
 	if err == fs.ErrorObjectNotFound {
-		parent := parentDir(dir)
-		if dir != parent {
-			upstreams, err = f.mkdir(ctx, parent)
+		if dir != parentDir(dir) {
+			if err := f.Mkdir(ctx, parentDir(dir)); err != nil {
+				return err
+			}
+			upstreams, err = f.create(ctx, dir)
 		} else if dir == "" {
 			// If root dirs not created then create them
 			upstreams, err = f.upstreams, nil
 		}
 	}
 	if err != nil {
-		return nil, err
+		return err
 	}
 	errs := Errors(make([]error, len(upstreams)))
 	multithread(len(upstreams), func(i int) {
 		err := upstreams[i].Mkdir(ctx, dir)
-		if err != nil {
-			errs[i] = fmt.Errorf("%s: %w", upstreams[i].Name(), err)
-		}
+		errs[i] = errors.Wrap(err, upstreams[i].Name())
 	})
-	err = errs.Err()
-	if err != nil {
-		return nil, err
-	}
-	// If created roots then choose one
-	if dir == "" {
-		upstreams, err = f.create(ctx, dir)
-	}
-	return upstreams, err
-}
-
-// Mkdir makes the root directory of the Fs object
-func (f *Fs) Mkdir(ctx context.Context, dir string) error {
-	_, err := f.mkdir(ctx, dir)
-	return err
+	return errs.Err()
 }
 
 // Purge all files in the directory
@@ -201,21 +186,19 @@ func (f *Fs) Purge(ctx context.Context, dir string) error {
 	errs := Errors(make([]error, len(upstreams)))
 	multithread(len(upstreams), func(i int) {
 		err := upstreams[i].Features().Purge(ctx, dir)
-		if errors.Is(err, fs.ErrorDirNotFound) {
+		if errors.Cause(err) == fs.ErrorDirNotFound {
 			err = nil
 		}
-		if err != nil {
-			errs[i] = fmt.Errorf("%s: %w", upstreams[i].Name(), err)
-		}
+		errs[i] = errors.Wrap(err, upstreams[i].Name())
 	})
 	return errs.Err()
 }
 
 // Copy src to this remote using server-side copy operations.
 //
-// This is stored with the remote path given.
+// This is stored with the remote path given
 //
-// It returns the destination Object and a possible error.
+// It returns the destination Object and a possible error
 //
 // Will only be called if src.Fs().Name() == f.Name()
 //
@@ -226,7 +209,7 @@ func (f *Fs) Copy(ctx context.Context, src fs.Object, remote string) (fs.Object,
 		fs.Debugf(src, "Can't copy - not same remote type")
 		return nil, fs.ErrorCantCopy
 	}
-	o := srcObj.UnWrapUpstream()
+	o := srcObj.UnWrap()
 	su := o.UpstreamFs()
 	if su.Features().Copy == nil {
 		return nil, fs.ErrorCantCopy
@@ -253,9 +236,9 @@ func (f *Fs) Copy(ctx context.Context, src fs.Object, remote string) (fs.Object,
 
 // Move src to this remote using server-side move operations.
 //
-// This is stored with the remote path given.
+// This is stored with the remote path given
 //
-// It returns the destination Object and a possible error.
+// It returns the destination Object and a possible error
 //
 // Will only be called if src.Fs().Name() == f.Name()
 //
@@ -271,7 +254,7 @@ func (f *Fs) Move(ctx context.Context, src fs.Object, remote string) (fs.Object,
 		return nil, err
 	}
 	for _, e := range entries {
-		if !operations.CanServerSideMove(e.UpstreamFs()) {
+		if e.UpstreamFs().Features().Move == nil {
 			return nil, fs.ErrorCantMove
 		}
 	}
@@ -281,7 +264,7 @@ func (f *Fs) Move(ctx context.Context, src fs.Object, remote string) (fs.Object,
 		su := entries[i].UpstreamFs()
 		o, ok := entries[i].(*upstream.Object)
 		if !ok {
-			errs[i] = fmt.Errorf("%s: %w", su.Name(), fs.ErrorNotAFile)
+			errs[i] = errors.Wrap(fs.ErrorNotAFile, su.Name())
 			return
 		}
 		var du *upstream.Fs
@@ -291,34 +274,15 @@ func (f *Fs) Move(ctx context.Context, src fs.Object, remote string) (fs.Object,
 			}
 		}
 		if du == nil {
-			errs[i] = fmt.Errorf("%s: %s: %w", su.Name(), remote, fs.ErrorCantMove)
+			errs[i] = errors.Wrap(fs.ErrorCantMove, su.Name()+":"+remote)
 			return
 		}
-		srcObj := o.UnWrap()
-		duFeatures := du.Features()
-		do := duFeatures.Move
-		if duFeatures.Move == nil {
-			do = duFeatures.Copy
-		}
-		// Do the Move or Copy
-		dstObj, err := do(ctx, srcObj, remote)
-		if err != nil {
-			errs[i] = fmt.Errorf("%s: %w", su.Name(), err)
+		mo, err := du.Features().Move(ctx, o.UnWrap(), remote)
+		if err != nil || mo == nil {
+			errs[i] = errors.Wrap(err, su.Name())
 			return
 		}
-		if dstObj == nil {
-			errs[i] = fmt.Errorf("%s: destination object not found", su.Name())
-			return
-		}
-		objs[i] = du.WrapObject(dstObj)
-		// Delete the source object if Copy
-		if duFeatures.Move == nil {
-			err = srcObj.Remove(ctx)
-			if err != nil {
-				errs[i] = fmt.Errorf("%s: %w", su.Name(), err)
-				return
-			}
-		}
+		objs[i] = du.WrapObject(mo)
 	})
 	var en []upstream.Entry
 	for _, o := range objs {
@@ -366,20 +330,18 @@ func (f *Fs) DirMove(ctx context.Context, src fs.Fs, srcRemote, dstRemote string
 			}
 		}
 		if du == nil {
-			errs[i] = fmt.Errorf("%s: %s: %w", su.Name(), su.Root(), fs.ErrorCantDirMove)
+			errs[i] = errors.Wrap(fs.ErrorCantDirMove, su.Name()+":"+su.Root())
 			return
 		}
 		err := du.Features().DirMove(ctx, su.Fs, srcRemote, dstRemote)
-		if err != nil {
-			errs[i] = fmt.Errorf("%s: %w", du.Name()+":"+du.Root(), err)
-		}
+		errs[i] = errors.Wrap(err, du.Name()+":"+du.Root())
 	})
 	errs = errs.FilterNil()
 	if len(errs) == 0 {
 		return nil
 	}
 	for _, e := range errs {
-		if !errors.Is(e, fs.ErrorDirExists) {
+		if errors.Cause(e) != fs.ErrorDirExists {
 			return errs
 		}
 	}
@@ -463,7 +425,10 @@ func (f *Fs) put(ctx context.Context, in io.Reader, src fs.ObjectInfo, stream bo
 	srcPath := src.Remote()
 	upstreams, err := f.create(ctx, srcPath)
 	if err == fs.ErrorObjectNotFound {
-		upstreams, err = f.mkdir(ctx, parentDir(srcPath))
+		if err := f.Mkdir(ctx, parentDir(srcPath)); err != nil {
+			return nil, err
+		}
+		upstreams, err = f.create(ctx, srcPath)
 	}
 	if err != nil {
 		return nil, err
@@ -497,11 +462,7 @@ func (f *Fs) put(ctx context.Context, in io.Reader, src fs.ObjectInfo, stream bo
 			o, err = u.Put(ctx, readers[i], src, options...)
 		}
 		if err != nil {
-			errs[i] = fmt.Errorf("%s: %w", u.Name(), err)
-			if len(upstreams) > 1 {
-				// Drain the input buffer to allow other uploads to continue
-				_, _ = io.Copy(io.Discard, readers[i])
-			}
+			errs[i] = errors.Wrap(err, u.Name())
 			return
 		}
 		objs[i] = u.WrapObject(o)
@@ -561,7 +522,7 @@ func (f *Fs) About(ctx context.Context) (*fs.Usage, error) {
 	}
 	for _, u := range f.upstreams {
 		usg, err := u.About(ctx)
-		if errors.Is(err, fs.ErrorDirNotFound) {
+		if errors.Cause(err) == fs.ErrorDirNotFound {
 			continue
 		}
 		if err != nil {
@@ -617,7 +578,7 @@ func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err e
 		u := f.upstreams[i]
 		entries, err := u.List(ctx, dir)
 		if err != nil {
-			errs[i] = fmt.Errorf("%s: %w", u.Name(), err)
+			errs[i] = errors.Wrap(err, u.Name())
 			return
 		}
 		uEntries := make([]upstream.Entry, len(entries))
@@ -628,7 +589,7 @@ func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err e
 	})
 	if len(errs) == len(errs.FilterNil()) {
 		errs = errs.Map(func(e error) error {
-			if errors.Is(e, fs.ErrorDirNotFound) {
+			if errors.Cause(e) == fs.ErrorDirNotFound {
 				return nil
 			}
 			return e
@@ -681,13 +642,13 @@ func (f *Fs) ListR(ctx context.Context, dir string, callback fs.ListRCallback) (
 			err = walk.ListR(ctx, u, dir, true, -1, walk.ListAll, callback)
 		}
 		if err != nil {
-			errs[i] = fmt.Errorf("%s: %w", u.Name(), err)
+			errs[i] = errors.Wrap(err, u.Name())
 			return
 		}
 	})
 	if len(errs) == len(errs.FilterNil()) {
 		errs = errs.Map(func(e error) error {
-			if errors.Is(e, fs.ErrorDirNotFound) {
+			if errors.Cause(e) == fs.ErrorDirNotFound {
 				return nil
 			}
 			return e
@@ -712,7 +673,7 @@ func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
 		u := f.upstreams[i]
 		o, err := u.NewObject(ctx, remote)
 		if err != nil && err != fs.ErrorObjectNotFound {
-			errs[i] = fmt.Errorf("%s: %w", u.Name(), err)
+			errs[i] = errors.Wrap(err, u.Name())
 			return
 		}
 		objs[i] = u.WrapObject(o)
@@ -801,9 +762,7 @@ func (f *Fs) Shutdown(ctx context.Context) error {
 		u := f.upstreams[i]
 		if do := u.Features().Shutdown; do != nil {
 			err := do(ctx)
-			if err != nil {
-				errs[i] = fmt.Errorf("%s: %w", u.Name(), err)
-			}
+			errs[i] = errors.Wrap(err, u.Name())
 		}
 	})
 	return errs.Err()
@@ -814,7 +773,7 @@ func (f *Fs) Shutdown(ctx context.Context) error {
 // The returned Fs is the actual Fs, referenced by remote in the config
 func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, error) {
 	// Parse config into Options struct
-	opt := new(common.Options)
+	opt := new(Options)
 	err := configstruct.Set(m, opt)
 	if err != nil {
 		return nil, err
@@ -838,12 +797,11 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 		}
 	}
 
-	root = strings.Trim(root, "/")
 	upstreams := make([]*upstream.Fs, len(opt.Upstreams))
 	errs := Errors(make([]error, len(opt.Upstreams)))
 	multithread(len(opt.Upstreams), func(i int) {
 		u := opt.Upstreams[i]
-		upstreams[i], errs[i] = upstream.New(ctx, u, root, opt)
+		upstreams[i], errs[i] = upstream.New(ctx, u, root, time.Duration(opt.CacheTime)*time.Second)
 	})
 	var usedUpstreams []*upstream.Fs
 	var fserr error
@@ -889,25 +847,10 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 		BucketBased:             true,
 		SetTier:                 true,
 		GetTier:                 true,
-		ReadMetadata:            true,
-		WriteMetadata:           true,
-		UserMetadata:            true,
 	}).Fill(ctx, f)
-	canMove, slowHash := true, false
 	for _, f := range upstreams {
 		features = features.Mask(ctx, f) // Mask all upstream fs
-		if !operations.CanServerSideMove(f) {
-			canMove = false
-		}
-		slowHash = slowHash || f.Features().SlowHash
 	}
-	// We can move if all remotes support Move or Copy
-	if canMove {
-		features.Move = f.Move
-	}
-
-	// If any of upstreams are SlowHash, propagate it
-	features.SlowHash = slowHash
 
 	// Enable ListR when upstreams either support ListR or is local
 	// But not when all upstreams are local

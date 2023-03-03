@@ -17,28 +17,41 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type testWrapper struct {
+	fs.ObjectInfo
+}
+
+// UnWrap returns the Object that this Object is wrapping or nil if it
+// isn't wrapping anything
+func (o testWrapper) UnWrap() fs.Object {
+	if o, ok := o.ObjectInfo.(fs.Object); ok {
+		return o
+	}
+	return nil
+}
+
 // Create a temporary local fs to upload things from
 
-func makeTempLocalFs(t *testing.T) (localFs fs.Fs) {
+func makeTempLocalFs(t *testing.T) (localFs fs.Fs, cleanup func()) {
 	localFs, err := fs.TemporaryLocalFs(context.Background())
 	require.NoError(t, err)
-	t.Cleanup(func() {
+	cleanup = func() {
 		require.NoError(t, localFs.Rmdir(context.Background(), ""))
-	})
-	return localFs
+	}
+	return localFs, cleanup
 }
 
 // Upload a file to a remote
-func uploadFile(t *testing.T, f fs.Fs, remote, contents string) (obj fs.Object) {
+func uploadFile(t *testing.T, f fs.Fs, remote, contents string) (obj fs.Object, cleanup func()) {
 	inBuf := bytes.NewBufferString(contents)
 	t1 := time.Date(2012, time.December, 17, 18, 32, 31, 0, time.UTC)
 	upSrc := object.NewStaticObjectInfo(remote, t1, int64(len(contents)), true, nil, nil)
 	obj, err := f.Put(context.Background(), inBuf, upSrc)
 	require.NoError(t, err)
-	t.Cleanup(func() {
+	cleanup = func() {
 		require.NoError(t, obj.Remove(context.Background()))
-	})
-	return obj
+	}
+	return obj, cleanup
 }
 
 // Test the ObjectInfo
@@ -52,9 +65,11 @@ func testObjectInfo(t *testing.T, f *Fs, wrap bool) {
 		path = "_wrap"
 	}
 
-	localFs := makeTempLocalFs(t)
+	localFs, cleanupLocalFs := makeTempLocalFs(t)
+	defer cleanupLocalFs()
 
-	obj := uploadFile(t, localFs, path, contents)
+	obj, cleanupObj := uploadFile(t, localFs, path, contents)
+	defer cleanupObj()
 
 	// encrypt the data
 	inBuf := bytes.NewBufferString(contents)
@@ -68,7 +83,7 @@ func testObjectInfo(t *testing.T, f *Fs, wrap bool) {
 	var oi fs.ObjectInfo = obj
 	if wrap {
 		// wrap the object in an fs.ObjectUnwrapper if required
-		oi = fs.NewOverrideRemote(oi, "new_remote")
+		oi = testWrapper{oi}
 	}
 
 	// wrap the object in a crypt for upload using the nonce we
@@ -76,9 +91,7 @@ func testObjectInfo(t *testing.T, f *Fs, wrap bool) {
 	src := f.newObjectInfo(oi, nonce)
 
 	// Test ObjectInfo methods
-	if !f.opt.NoDataEncryption {
-		assert.Equal(t, int64(outBuf.Len()), src.Size())
-	}
+	assert.Equal(t, int64(outBuf.Len()), src.Size())
 	assert.Equal(t, f, src.Fs())
 	assert.NotEqual(t, path, src.Remote())
 
@@ -101,13 +114,16 @@ func testComputeHash(t *testing.T, f *Fs) {
 		t.Skipf("%v: does not support hashes", f.Fs)
 	}
 
-	localFs := makeTempLocalFs(t)
+	localFs, cleanupLocalFs := makeTempLocalFs(t)
+	defer cleanupLocalFs()
 
 	// Upload a file to localFs as a test object
-	localObj := uploadFile(t, localFs, path, contents)
+	localObj, cleanupLocalObj := uploadFile(t, localFs, path, contents)
+	defer cleanupLocalObj()
 
 	// Upload the same data to the remote Fs also
-	remoteObj := uploadFile(t, f, path, contents)
+	remoteObj, cleanupRemoteObj := uploadFile(t, f, path, contents)
+	defer cleanupRemoteObj()
 
 	// Calculate the expected Hash of the remote object
 	computedHash, err := f.ComputeHash(ctx, remoteObj.(*Object), localObj, hashType)

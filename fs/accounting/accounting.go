@@ -3,7 +3,6 @@ package accounting
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -11,7 +10,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/rclone/rclone/fs/rc"
+	"golang.org/x/time/rate"
 
+	"github.com/pkg/errors"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/asyncreader"
 	"github.com/rclone/rclone/fs/fserrors"
@@ -19,7 +20,7 @@ import (
 
 // ErrorMaxTransferLimitReached defines error when transfer limit is reached.
 // Used for checking on exit and matching to correct exit code.
-var ErrorMaxTransferLimitReached = errors.New("max transfer limit reached as set by --max-transfer")
+var ErrorMaxTransferLimitReached = errors.New("Max transfer limit reached as set by --max-transfer")
 
 // ErrorMaxTransferLimitReachedFatal is returned from Read when the max
 // transfer limit is reached.
@@ -28,18 +29,6 @@ var ErrorMaxTransferLimitReachedFatal = fserrors.FatalError(ErrorMaxTransferLimi
 // ErrorMaxTransferLimitReachedGraceful is returned from operations.Copy when the max
 // transfer limit is reached and a graceful stop is required.
 var ErrorMaxTransferLimitReachedGraceful = fserrors.NoRetryError(ErrorMaxTransferLimitReached)
-
-// Start sets up the accounting, in particular the bandwidth limiting
-func Start(ctx context.Context) {
-	// Start the token bucket limiter
-	TokenBucket.StartTokenBucket(ctx)
-
-	// Start the bandwidth update ticker
-	TokenBucket.StartTokenTicker(ctx)
-
-	// Start the transactions per second limiter
-	StartLimitTPS(ctx)
-}
 
 // Account limits and accounts for one transfer
 type Account struct {
@@ -61,7 +50,7 @@ type Account struct {
 	exit    chan struct{} // channel that will be closed when transfer is finished
 	withBuf bool          // is using a buffered in
 
-	tokenBucket buckets // per file bandwidth limiter (may be nil)
+	tokenBucket *rate.Limiter // per file bandwidth limiter (may be nil)
 
 	values accountValues
 }
@@ -74,7 +63,7 @@ type accountValues struct {
 	start   time.Time  // Start time of first read
 	lpTime  time.Time  // Time of last average measurement
 	lpBytes int        // Number of bytes read since last measurement
-	avg     float64    // Moving average of last few measurements in Byte/s
+	avg     float64    // Moving average of last few measurements in bytes/s
 }
 
 const averagePeriod = 16 // period to do exponentially weighted averages over
@@ -102,7 +91,7 @@ func newAccountSizeName(ctx context.Context, stats *StatsInfo, in io.ReadCloser,
 		acc.values.max = int64((acc.ci.MaxTransfer))
 	}
 	currLimit := acc.ci.BwLimitFile.LimitAt(time.Now())
-	if currLimit.Bandwidth.IsSet() {
+	if currLimit.Bandwidth > 0 {
 		fs.Debugf(acc.name, "Limiting file transfer to %v", currLimit.Bandwidth)
 		acc.tokenBucket = newTokenBucket(currLimit.Bandwidth)
 	}
@@ -214,10 +203,7 @@ func (acc *Account) averageLoop() {
 			acc.values.mu.Lock()
 			// Add average of last second.
 			elapsed := now.Sub(acc.values.lpTime).Seconds()
-			avg := 0.0
-			if elapsed > 0 {
-				avg = float64(acc.values.lpBytes) / elapsed
-			}
+			avg := float64(acc.values.lpBytes) / elapsed
 			// Soft start the moving average
 			if period < averagePeriod {
 				period++
@@ -294,16 +280,10 @@ func (acc *Account) ServerSideCopyEnd(n int64) {
 	acc.stats.Bytes(n)
 }
 
-// DryRun accounts for statistics without running the operation
-func (acc *Account) DryRun(n int64) {
-	acc.ServerSideCopyStart()
-	acc.ServerSideCopyEnd(n)
-}
-
 // Account for n bytes from the current file bandwidth limit (if any)
 func (acc *Account) limitPerFileBandwidth(n int) {
 	acc.values.mu.Lock()
-	tokenBucket := acc.tokenBucket[TokenBucketSlotAccounting]
+	tokenBucket := acc.tokenBucket
 	acc.values.mu.Unlock()
 
 	if tokenBucket != nil {
@@ -324,7 +304,7 @@ func (acc *Account) accountRead(n int) {
 
 	acc.stats.Bytes(int64(n))
 
-	TokenBucket.LimitBandwidth(TokenBucketSlotAccounting, n)
+	limitBandwidth(n)
 	acc.limitPerFileBandwidth(n)
 }
 
@@ -444,12 +424,8 @@ func (acc *Account) speed() (bps, current float64) {
 		return 0, 0
 	}
 	// Calculate speed from first read.
-	total := float64(time.Since(acc.values.start)) / float64(time.Second)
-	if total > 0 {
-		bps = float64(acc.values.bytes) / total
-	} else {
-		bps = 0.0
-	}
+	total := float64(time.Now().Sub(acc.values.start)) / float64(time.Second)
+	bps = float64(acc.values.bytes) / total
 	current = acc.values.avg
 	return
 }
@@ -527,11 +503,14 @@ func (acc *Account) rcStats() (out rc.Params) {
 	out["speed"] = spd
 	out["speedAvg"] = cur
 
-	eta, etaOK := acc.eta()
-	if etaOK {
-		out["eta"] = eta.Seconds()
-	} else {
-		out["eta"] = nil
+	eta, etaok := acc.eta()
+	out["eta"] = nil
+	if etaok {
+		if eta > 0 {
+			out["eta"] = eta.Seconds()
+		} else {
+			out["eta"] = 0
+		}
 	}
 	out["name"] = acc.name
 

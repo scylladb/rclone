@@ -2,7 +2,6 @@
 //
 // This library exports the core rc functionality
 
-//go:build js
 // +build js
 
 package main
@@ -10,13 +9,12 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"log"
 	"net/http"
 	"runtime"
 	"syscall/js"
 
+	"github.com/pkg/errors"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/rc"
 
@@ -55,9 +53,10 @@ func paramToValue(in rc.Params) (out js.Value) {
 func errorValue(method string, in js.Value, err error) js.Value {
 	fs.Errorf(nil, "rc: %q: error: %v", method, err)
 	// Adjust the error return for some well known errors
+	errOrig := errors.Cause(err)
 	status := http.StatusInternalServerError
 	switch {
-	case errors.Is(err, fs.ErrorDirNotFound) || errors.Is(err, fs.ErrorObjectNotFound):
+	case errOrig == fs.ErrorDirNotFound || errOrig == fs.ErrorObjectNotFound:
 		status = http.StatusNotFound
 	case rc.IsErrParamInvalid(err) || rc.IsErrParamNotFound(err):
 		status = http.StatusBadRequest
@@ -89,7 +88,7 @@ func rcCallback(this js.Value, args []js.Value) interface{} {
 		inJSON := jsJSON.Call("stringify", inRaw).String()
 		err := json.Unmarshal([]byte(inJSON), &in)
 		if err != nil {
-			return errorValue(method, inRaw, fmt.Errorf("couldn't unmarshal input: %w", err))
+			return errorValue(method, inRaw, errors.Wrap(err, "couldn't unmarshal input"))
 		}
 	default:
 		return errorValue(method, inRaw, errors.New("in parameter must be null or object"))
@@ -97,12 +96,12 @@ func rcCallback(this js.Value, args []js.Value) interface{} {
 
 	call := rc.Calls.Get(method)
 	if call == nil {
-		return errorValue(method, inRaw, fmt.Errorf("method %q not found", method))
+		return errorValue(method, inRaw, errors.Errorf("method %q not found", method))
 	}
 
 	out, err := call.Fn(ctx, in)
 	if err != nil {
-		return errorValue(method, inRaw, fmt.Errorf("method call failed: %w", err))
+		return errorValue(method, inRaw, errors.Wrap(err, "method call failed"))
 	}
 	if out == nil {
 		return nil
@@ -110,7 +109,7 @@ func rcCallback(this js.Value, args []js.Value) interface{} {
 	var out2 map[string]interface{}
 	err = rc.Reshape(&out2, out)
 	if err != nil {
-		return errorValue(method, inRaw, fmt.Errorf("result reshape failed: %w", err))
+		return errorValue(method, inRaw, errors.Wrap(err, "result reshape failed"))
 	}
 
 	return js.ValueOf(out2)

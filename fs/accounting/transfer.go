@@ -50,7 +50,6 @@ type Transfer struct {
 	size      int64
 	startedAt time.Time
 	checking  bool
-	what      string // what kind of transfer this is
 
 	// Protects all below
 	//
@@ -64,23 +63,22 @@ type Transfer struct {
 }
 
 // newCheckingTransfer instantiates new checking of the object.
-func newCheckingTransfer(stats *StatsInfo, obj fs.DirEntry, what string) *Transfer {
-	return newTransferRemoteSize(stats, obj.Remote(), obj.Size(), true, what)
+func newCheckingTransfer(stats *StatsInfo, obj fs.Object) *Transfer {
+	return newTransferRemoteSize(stats, obj.Remote(), obj.Size(), true)
 }
 
 // newTransfer instantiates new transfer.
-func newTransfer(stats *StatsInfo, obj fs.DirEntry) *Transfer {
-	return newTransferRemoteSize(stats, obj.Remote(), obj.Size(), false, "")
+func newTransfer(stats *StatsInfo, obj fs.Object) *Transfer {
+	return newTransferRemoteSize(stats, obj.Remote(), obj.Size(), false)
 }
 
-func newTransferRemoteSize(stats *StatsInfo, remote string, size int64, checking bool, what string) *Transfer {
+func newTransferRemoteSize(stats *StatsInfo, remote string, size int64, checking bool) *Transfer {
 	tr := &Transfer{
 		stats:     stats,
 		remote:    remote,
 		size:      size,
 		startedAt: time.Now(),
 		checking:  checking,
-		what:      what,
 	}
 	stats.AddTransfer(tr)
 	return tr
@@ -134,7 +132,6 @@ func (tr *Transfer) Reset(ctx context.Context) {
 	ci := fs.GetConfig(ctx)
 
 	if acc != nil {
-		acc.Done()
 		if err := acc.Close(); err != nil {
 			fs.LogLevelPrintf(ci.StatsLogLevel, nil, "can't close account: %+v\n", err)
 		}

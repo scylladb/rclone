@@ -1,6 +1,6 @@
-//go:build cmount && ((linux && cgo) || (darwin && cgo) || (freebsd && cgo) || windows)
 // +build cmount
-// +build linux,cgo darwin,cgo freebsd,cgo windows
+// +build cgo
+// +build linux darwin freebsd windows
 
 package cmount
 
@@ -8,29 +8,26 @@ import (
 	"io"
 	"os"
 	"path"
-	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
+	"github.com/billziss-gh/cgofuse/fuse"
+	"github.com/pkg/errors"
 	"github.com/rclone/rclone/cmd/mountlib"
 	"github.com/rclone/rclone/fs"
-	"github.com/rclone/rclone/fs/fserrors"
 	"github.com/rclone/rclone/fs/log"
 	"github.com/rclone/rclone/vfs"
-	"github.com/winfsp/cgofuse/fuse"
 )
 
 const fhUnset = ^uint64(0)
 
 // FS represents the top level filing system
 type FS struct {
-	VFS       *vfs.VFS
-	f         fs.Fs
-	ready     chan (struct{})
-	mu        sync.Mutex // to protect the below
-	handles   []vfs.Handle
-	destroyed int32 // read/write with sync/atomic
+	VFS     *vfs.VFS
+	f       fs.Fs
+	ready   chan (struct{})
+	mu      sync.Mutex // to protect the below
+	handles []vfs.Handle
 }
 
 // NewFS makes a new FS
@@ -190,7 +187,6 @@ func (fsys *FS) Init() {
 // Destroy call).
 func (fsys *FS) Destroy() {
 	defer log.Trace(fsys.f, "")("")
-	atomic.StoreInt32(&fsys.destroyed, 1)
 }
 
 // Getattr reads the attributes for path
@@ -546,41 +542,22 @@ func (fsys *FS) Fsyncdir(path string, datasync bool, fh uint64) (errc int) {
 
 // Setxattr sets extended attributes.
 func (fsys *FS) Setxattr(path string, name string, value []byte, flags int) (errc int) {
-	defer log.Trace(path, "name=%q, value=%q, flags=%d", name, value, flags)("errc=%d", &errc)
 	return -fuse.ENOSYS
 }
 
 // Getxattr gets extended attributes.
 func (fsys *FS) Getxattr(path string, name string) (errc int, value []byte) {
-	defer log.Trace(path, "name=%q", name)("errc=%d, value=%q", &errc, &value)
 	return -fuse.ENOSYS, nil
 }
 
 // Removexattr removes extended attributes.
 func (fsys *FS) Removexattr(path string, name string) (errc int) {
-	defer log.Trace(path, "name=%q", name)("errc=%d", &errc)
 	return -fuse.ENOSYS
 }
 
 // Listxattr lists extended attributes.
 func (fsys *FS) Listxattr(path string, fill func(name string) bool) (errc int) {
-	defer log.Trace(path, "fill=%p", fill)("errc=%d", &errc)
 	return -fuse.ENOSYS
-}
-
-// Getpath allows a case-insensitive file system to report the correct case of
-// a file path.
-func (fsys *FS) Getpath(path string, fh uint64) (errc int, normalisedPath string) {
-	defer log.Trace(path, "Getpath fh=%d", fh)("errc=%d, normalisedPath=%q", &errc, &normalisedPath)
-	node, _, errc := fsys.getNode(path, fh)
-	if errc != 0 {
-		return errc, ""
-	}
-	normalisedPath = node.Path()
-	if !strings.HasPrefix("/", normalisedPath) {
-		normalisedPath = "/" + normalisedPath
-	}
-	return 0, normalisedPath
 }
 
 // Translate errors from mountlib
@@ -588,8 +565,7 @@ func translateError(err error) (errc int) {
 	if err == nil {
 		return 0
 	}
-	_, uErr := fserrors.Cause(err)
-	switch uErr {
+	switch errors.Cause(err) {
 	case vfs.OK:
 		return 0
 	case vfs.ENOENT, fs.ErrorDirNotFound, fs.ErrorObjectNotFound:
@@ -647,7 +623,6 @@ func translateOpenFlags(inFlags int) (outFlags int) {
 var (
 	_ fuse.FileSystemInterface = (*FS)(nil)
 	_ fuse.FileSystemOpenEx    = (*FS)(nil)
-	_ fuse.FileSystemGetpath   = (*FS)(nil)
 	//_ fuse.FileSystemChflags    = (*FS)(nil)
 	//_ fuse.FileSystemSetcrtime  = (*FS)(nil)
 	//_ fuse.FileSystemSetchgtime = (*FS)(nil)

@@ -1,18 +1,16 @@
-//go:build linux || freebsd
-// +build linux freebsd
+// +build linux,go1.13 freebsd,go1.13
 
 package mount
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"os"
-	"syscall"
 	"time"
 
 	"bazil.org/fuse"
 	fusefs "bazil.org/fuse/fs"
+	"github.com/pkg/errors"
 	"github.com/rclone/rclone/cmd/mountlib"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/log"
@@ -39,6 +37,7 @@ func (d *Dir) Attr(ctx context.Context, a *fuse.Attr) (err error) {
 	a.Atime = modTime
 	a.Mtime = modTime
 	a.Ctime = modTime
+	a.Crtime = modTime
 	// FIXME include Valid so get some caching?
 	// FIXME fs.Debugf(d.path, "Dir.Attr %+v", a)
 	return nil
@@ -109,13 +108,6 @@ func (d *Dir) ReadDirAll(ctx context.Context) (dirents []fuse.Dirent, err error)
 	if err != nil {
 		return nil, translateError(err)
 	}
-	dirents = append(dirents, fuse.Dirent{
-		Type: fuse.DT_Dir,
-		Name: ".",
-	}, fuse.Dirent{
-		Type: fuse.DT_Dir,
-		Name: "..",
-	})
 	for _, node := range items {
 		name := node.Name()
 		if len(name) > mountlib.MaxLeafSize {
@@ -182,15 +174,6 @@ func (d *Dir) Remove(ctx context.Context, req *fuse.RemoveRequest) (err error) {
 	return nil
 }
 
-// Invalidate a leaf in a directory
-func (d *Dir) invalidateEntry(dirNode fusefs.Node, leaf string) {
-	fs.Debugf(dirNode, "Invalidating %q", leaf)
-	err := d.fsys.server.InvalidateEntry(dirNode, leaf)
-	if err != nil {
-		fs.Debugf(dirNode, "Failed to invalidate %q: %v", leaf, err)
-	}
-}
-
 // Check interface satisfied
 var _ fusefs.NodeRenamer = (*Dir)(nil)
 
@@ -199,20 +182,13 @@ func (d *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDir fusefs
 	defer log.Trace(d, "oldName=%q, newName=%q, newDir=%+v", req.OldName, req.NewName, newDir)("err=%v", &err)
 	destDir, ok := newDir.(*Dir)
 	if !ok {
-		return fmt.Errorf("unknown Dir type %T", newDir)
+		return errors.Errorf("Unknown Dir type %T", newDir)
 	}
 
 	err = d.Dir.Rename(req.OldName, req.NewName, destDir.Dir)
 	if err != nil {
 		return translateError(err)
 	}
-
-	// Invalidate the new directory entry so it gets re-read (in
-	// the background otherwise we cause a deadlock)
-	//
-	// See https://github.com/rclone/rclone/issues/4977 for why
-	go d.invalidateEntry(newDir, req.NewName)
-	//go d.invalidateEntry(d, req.OldName)
 
 	return nil
 }
@@ -237,7 +213,7 @@ var _ fusefs.NodeLinker = (*Dir)(nil)
 // existing Node. Receiver must be a directory.
 func (d *Dir) Link(ctx context.Context, req *fuse.LinkRequest, old fusefs.Node) (newNode fusefs.Node, err error) {
 	defer log.Trace(d, "req=%v, old=%v", req, old)("new=%v, err=%v", &newNode, &err)
-	return nil, syscall.ENOSYS
+	return nil, fuse.ENOSYS
 }
 
 // Check interface satisfied

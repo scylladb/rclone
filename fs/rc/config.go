@@ -6,10 +6,8 @@ package rc
 
 import (
 	"context"
-	"fmt"
 
-	"github.com/rclone/rclone/fs"
-	"github.com/rclone/rclone/fs/filter"
+	"github.com/pkg/errors"
 )
 
 var (
@@ -34,7 +32,7 @@ func init() {
 		Path:  "options/blocks",
 		Fn:    rcOptionsBlocks,
 		Title: "List all the option blocks",
-		Help: `Returns:
+		Help: `Returns
 - options - a list of the options block names`,
 	})
 }
@@ -54,13 +52,9 @@ func init() {
 	Add(Call{
 		Path:  "options/get",
 		Fn:    rcOptionsGet,
-		Title: "Get all the global options",
+		Title: "Get all the options",
 		Help: `Returns an object where keys are option block names and values are an
 object with the current option values in.
-
-Note that these are the global options which are unaffected by use of
-the _config and _filter parameters. If you wish to read the parameters
-set in _config then use options/config and for _filter use options/filter.
 
 This shows the internal names of the option within rclone which should
 map to the external options very easily with a few exceptions.
@@ -79,40 +73,10 @@ func rcOptionsGet(ctx context.Context, in Params) (out Params, err error) {
 
 func init() {
 	Add(Call{
-		Path:  "options/local",
-		Fn:    rcOptionsLocal,
-		Title: "Get the currently active config for this call",
-		Help: `Returns an object with the keys "config" and "filter".
-The "config" key contains the local config and the "filter" key contains
-the local filters.
-
-Note that these are the local options specific to this rc call. If
-_config was not supplied then they will be the global options.
-Likewise with "_filter".
-
-This call is mostly useful for seeing if _config and _filter passing
-is working.
-
-This shows the internal names of the option within rclone which should
-map to the external options very easily with a few exceptions.
-`,
-	})
-}
-
-// Show the current config
-func rcOptionsLocal(ctx context.Context, in Params) (out Params, err error) {
-	out = make(Params)
-	out["config"] = fs.GetConfig(ctx)
-	out["filter"] = filter.GetConfig(ctx).Opt
-	return out, nil
-}
-
-func init() {
-	Add(Call{
 		Path:  "options/set",
 		Fn:    rcOptionsSet,
 		Title: "Set an option",
-		Help: `Parameters:
+		Help: `Parameters
 
 - option block name containing an object with
   - key: value
@@ -125,18 +89,17 @@ changed like this.
 
 For example:
 
-This sets DEBUG level logs (-vv) (these can be set by number or string)
+This sets DEBUG level logs (-vv)
 
-    rclone rc options/set --json '{"main": {"LogLevel": "DEBUG"}}'
     rclone rc options/set --json '{"main": {"LogLevel": 8}}'
 
 And this sets INFO level logs (-v)
 
-    rclone rc options/set --json '{"main": {"LogLevel": "INFO"}}'
+    rclone rc options/set --json '{"main": {"LogLevel": 7}}'
 
 And this sets NOTICE level logs (normal without -v)
 
-    rclone rc options/set --json '{"main": {"LogLevel": "NOTICE"}}'
+    rclone rc options/set --json '{"main": {"LogLevel": 6}}'
 `,
 	})
 }
@@ -146,16 +109,16 @@ func rcOptionsSet(ctx context.Context, in Params) (out Params, err error) {
 	for name, options := range in {
 		current := optionBlock[name]
 		if current == nil {
-			return nil, fmt.Errorf("unknown option block %q", name)
+			return nil, errors.Errorf("unknown option block %q", name)
 		}
 		err := Reshape(current, options)
 		if err != nil {
-			return nil, fmt.Errorf("failed to write options from block %q: %w", name, err)
+			return nil, errors.Wrapf(err, "failed to write options from block %q", name)
 		}
 		if reload := optionReload[name]; reload != nil {
 			err = reload(ctx)
 			if err != nil {
-				return nil, fmt.Errorf("failed to reload options from block %q: %w", name, err)
+				return nil, errors.Wrapf(err, "failed to reload options from block %q", name)
 			}
 		}
 	}

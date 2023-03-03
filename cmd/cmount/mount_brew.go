@@ -1,15 +1,13 @@
-//go:build brew && darwin
-// +build brew,darwin
-
-// Package cmount implements a FUSE mounting system for rclone remotes.
-//
 // Build for macos with the brew tag to handle the absence
 // of fuse and print an appropriate error message
+
+// +build brew
+// +build darwin
+
 package cmount
 
 import (
-	"errors"
-
+	"github.com/pkg/errors"
 	"github.com/rclone/rclone/cmd/mountlib"
 	"github.com/rclone/rclone/vfs"
 )

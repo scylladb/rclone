@@ -18,9 +18,9 @@ canStream = false
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -28,6 +28,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/rclone/rclone/backend/premiumizeme/api"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/config"
@@ -77,10 +78,11 @@ func init() {
 		Name:        "premiumizeme",
 		Description: "premiumize.me",
 		NewFs:       NewFs,
-		Config: func(ctx context.Context, name string, m configmap.Mapper, config fs.ConfigIn) (*fs.ConfigOut, error) {
-			return oauthutil.ConfigOut("", &oauthutil.Options{
-				OAuth2Config: oauthConfig,
-			})
+		Config: func(ctx context.Context, name string, m configmap.Mapper) {
+			err := oauthutil.Config(ctx, "premiumizeme", name, m, oauthConfig, nil)
+			if err != nil {
+				log.Fatalf("Failed to configure token: %v", err)
+			}
 		},
 		Options: []fs.Option{{
 			Name: "api_key",
@@ -174,10 +176,7 @@ var retryErrorCodes = []int{
 
 // shouldRetry returns a boolean as to whether this resp and err
 // deserve to be retried.  It returns the err as a convenience
-func shouldRetry(ctx context.Context, resp *http.Response, err error) (bool, error) {
-	if fserrors.ContextError(ctx, &err) {
-		return false, err
-	}
+func shouldRetry(resp *http.Response, err error) (bool, error) {
 	return fserrors.ShouldRetry(err) || fserrors.ShouldRetryHTTP(resp, retryErrorCodes), err
 }
 
@@ -193,7 +192,7 @@ func (f *Fs) readMetaDataForPath(ctx context.Context, path string, directoriesOn
 	}
 
 	lcLeaf := strings.ToLower(leaf)
-	_, found, err := f.listAll(ctx, directoryID, directoriesOnly, filesOnly, func(item *api.Item) bool {
+	found, err := f.listAll(ctx, directoryID, directoriesOnly, filesOnly, func(item *api.Item) bool {
 		if strings.ToLower(item.Name) == lcLeaf {
 			info = item
 			return true
@@ -250,7 +249,7 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 	if opt.APIKey == "" {
 		client, ts, err = oauthutil.NewClient(ctx, name, m, oauthConfig)
 		if err != nil {
-			return nil, fmt.Errorf("failed to configure premiumize.me: %w", err)
+			return nil, errors.Wrap(err, "failed to configure premiumize.me")
 		}
 	} else {
 		client = fshttp.NewClient(ctx)
@@ -345,18 +344,13 @@ func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
 // FindLeaf finds a directory of name leaf in the folder with ID pathID
 func (f *Fs) FindLeaf(ctx context.Context, pathID, leaf string) (pathIDOut string, found bool, err error) {
 	// Find the leaf in pathID
-	var newDirID string
-	newDirID, found, err = f.listAll(ctx, pathID, true, false, func(item *api.Item) bool {
-		if strings.EqualFold(item.Name, leaf) {
+	found, err = f.listAll(ctx, pathID, true, false, func(item *api.Item) bool {
+		if item.Name == leaf {
 			pathIDOut = item.ID
 			return true
 		}
 		return false
 	})
-	// Update the Root directory ID to its actual value
-	if pathID == rootID {
-		f.dirCache.SetRootIDAlias(newDirID)
-	}
 	return pathIDOut, found, err
 }
 
@@ -376,14 +370,14 @@ func (f *Fs) CreateDir(ctx context.Context, pathID, leaf string) (newID string, 
 	}
 	err = f.pacer.Call(func() (bool, error) {
 		resp, err = f.srv.CallJSON(ctx, &opts, nil, &info)
-		return shouldRetry(ctx, resp, err)
+		return shouldRetry(resp, err)
 	})
 	if err != nil {
 		//fmt.Printf("...Error %v\n", err)
-		return "", fmt.Errorf("CreateDir http: %w", err)
+		return "", errors.Wrap(err, "CreateDir http")
 	}
 	if err = info.AsErr(); err != nil {
-		return "", fmt.Errorf("CreateDir: %w", err)
+		return "", errors.Wrap(err, "CreateDir")
 	}
 	// fmt.Printf("...Id %q\n", *info.Id)
 	return info.ID, nil
@@ -400,32 +394,27 @@ type listAllFn func(*api.Item) bool
 // Lists the directory required calling the user function on each item found
 //
 // If the user fn ever returns true then it early exits with found = true
-//
-// It returns a newDirID which is what the system returned as the directory ID
-func (f *Fs) listAll(ctx context.Context, dirID string, directoriesOnly bool, filesOnly bool, fn listAllFn) (newDirID string, found bool, err error) {
+func (f *Fs) listAll(ctx context.Context, dirID string, directoriesOnly bool, filesOnly bool, fn listAllFn) (found bool, err error) {
 	opts := rest.Opts{
 		Method:     "GET",
 		Path:       "/folder/list",
 		Parameters: f.baseParams(),
 	}
-	if dirID != rootID {
-		opts.Parameters.Set("id", dirID)
-	}
+	opts.Parameters.Set("id", dirID)
 	opts.Parameters.Set("includebreadcrumbs", "false")
 
 	var result api.FolderListResponse
 	var resp *http.Response
 	err = f.pacer.Call(func() (bool, error) {
 		resp, err = f.srv.CallJSON(ctx, &opts, nil, &result)
-		return shouldRetry(ctx, resp, err)
+		return shouldRetry(resp, err)
 	})
 	if err != nil {
-		return newDirID, found, fmt.Errorf("couldn't list files: %w", err)
+		return found, errors.Wrap(err, "couldn't list files")
 	}
 	if err = result.AsErr(); err != nil {
-		return newDirID, found, fmt.Errorf("error while listing: %w", err)
+		return found, errors.Wrap(err, "error while listing")
 	}
-	newDirID = result.FolderID
 	for i := range result.Content {
 		item := &result.Content[i]
 		if item.Type == api.ItemTypeFolder {
@@ -446,6 +435,7 @@ func (f *Fs) listAll(ctx context.Context, dirID string, directoriesOnly bool, fi
 			break
 		}
 	}
+
 	return
 }
 
@@ -464,7 +454,7 @@ func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err e
 		return nil, err
 	}
 	var iErr error
-	_, _, err = f.listAll(ctx, directoryID, false, false, func(info *api.Item) bool {
+	_, err = f.listAll(ctx, directoryID, false, false, func(info *api.Item) bool {
 		remote := path.Join(dir, info.Name)
 		if info.Type == api.ItemTypeFolder {
 			// cache the directory ID for later lookups
@@ -493,7 +483,7 @@ func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err e
 // Creates from the parameters passed in a half finished Object which
 // must have setMetaData called on it
 //
-// Returns the object, leaf, directoryID and error.
+// Returns the object, leaf, directoryID and error
 //
 // Used to create new objects
 func (f *Fs) createObject(ctx context.Context, remote string, modTime time.Time, size int64) (o *Object, leaf string, directoryID string, err error) {
@@ -512,7 +502,7 @@ func (f *Fs) createObject(ctx context.Context, remote string, modTime time.Time,
 
 // Put the object
 //
-// Copy the reader in to the new object which is returned.
+// Copy the reader in to the new object which is returned
 //
 // The new object may have been created if an error is returned
 func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (fs.Object, error) {
@@ -530,9 +520,9 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 
 // PutUnchecked the object into the container
 //
-// This will produce an error if the object already exists.
+// This will produce an error if the object already exists
 //
-// Copy the reader in to the new object which is returned.
+// Copy the reader in to the new object which is returned
 //
 // The new object may have been created if an error is returned
 func (f *Fs) PutUnchecked(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (fs.Object, error) {
@@ -568,11 +558,11 @@ func (f *Fs) purgeCheck(ctx context.Context, dir string, check bool) error {
 
 	// need to check if empty as it will delete recursively by default
 	if check {
-		_, found, err := f.listAll(ctx, rootID, false, false, func(item *api.Item) bool {
+		found, err := f.listAll(ctx, rootID, false, false, func(item *api.Item) bool {
 			return true
 		})
 		if err != nil {
-			return fmt.Errorf("purgeCheck: %w", err)
+			return errors.Wrap(err, "purgeCheck")
 		}
 		if found {
 			return fs.ErrorDirectoryNotEmpty
@@ -591,13 +581,13 @@ func (f *Fs) purgeCheck(ctx context.Context, dir string, check bool) error {
 	var result api.Response
 	err = f.pacer.Call(func() (bool, error) {
 		resp, err = f.srv.CallJSON(ctx, &opts, nil, &result)
-		return shouldRetry(ctx, resp, err)
+		return shouldRetry(resp, err)
 	})
 	if err != nil {
-		return fmt.Errorf("rmdir failed: %w", err)
+		return errors.Wrap(err, "rmdir failed")
 	}
 	if err = result.AsErr(); err != nil {
-		return fmt.Errorf("rmdir: %w", err)
+		return errors.Wrap(err, "rmdir")
 	}
 	f.dirCache.FlushDir(dir)
 	if err != nil {
@@ -645,7 +635,7 @@ func (f *Fs) move(ctx context.Context, isFile bool, id, oldLeaf, newLeaf, oldDir
 		tmpLeaf := newLeaf + "." + random.String(8)
 		err = f.renameLeaf(ctx, isFile, id, tmpLeaf)
 		if err != nil {
-			return fmt.Errorf("Move rename leaf: %w", err)
+			return errors.Wrap(err, "Move rename leaf")
 		}
 	}
 
@@ -660,24 +650,23 @@ func (f *Fs) move(ctx context.Context, isFile bool, id, oldLeaf, newLeaf, oldDir
 				"id": {newDirectoryID},
 			},
 		}
-		opts.MultipartParams.Set("items[0][id]", id)
 		if isFile {
-			opts.MultipartParams.Set("items[0][type]", "file")
+			opts.MultipartParams.Set("files[]", id)
 		} else {
-			opts.MultipartParams.Set("items[0][type]", "folder")
+			opts.MultipartParams.Set("folders[]", id)
 		}
 		//replacedLeaf := enc.FromStandardName(leaf)
 		var resp *http.Response
 		var result api.Response
 		err = f.pacer.Call(func() (bool, error) {
 			resp, err = f.srv.CallJSON(ctx, &opts, nil, &result)
-			return shouldRetry(ctx, resp, err)
+			return shouldRetry(resp, err)
 		})
 		if err != nil {
-			return fmt.Errorf("Move http: %w", err)
+			return errors.Wrap(err, "Move http")
 		}
 		if err = result.AsErr(); err != nil {
-			return fmt.Errorf("Move: %w", err)
+			return errors.Wrap(err, "Move")
 		}
 	}
 
@@ -685,7 +674,7 @@ func (f *Fs) move(ctx context.Context, isFile bool, id, oldLeaf, newLeaf, oldDir
 	if doRenameLeaf {
 		err = f.renameLeaf(ctx, isFile, id, newLeaf)
 		if err != nil {
-			return fmt.Errorf("Move rename leaf: %w", err)
+			return errors.Wrap(err, "Move rename leaf")
 		}
 	}
 
@@ -694,9 +683,9 @@ func (f *Fs) move(ctx context.Context, isFile bool, id, oldLeaf, newLeaf, oldDir
 
 // Move src to this remote using server-side move operations.
 //
-// This is stored with the remote path given.
+// This is stored with the remote path given
 //
-// It returns the destination Object and a possible error.
+// It returns the destination Object and a possible error
 //
 // Will only be called if src.Fs().Name() == f.Name()
 //
@@ -780,13 +769,13 @@ func (f *Fs) About(ctx context.Context) (usage *fs.Usage, err error) {
 	}
 	err = f.pacer.Call(func() (bool, error) {
 		resp, err = f.srv.CallJSON(ctx, &opts, nil, &info)
-		return shouldRetry(ctx, resp, err)
+		return shouldRetry(resp, err)
 	})
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "CreateDir http")
 	}
 	if err = info.AsErr(); err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "CreateDir")
 	}
 	usage = &fs.Usage{
 		Used: fs.NewUsageValue(int64(info.SpaceUsed)),
@@ -843,7 +832,7 @@ func (o *Object) Size() int64 {
 // setMetaData sets the metadata from info
 func (o *Object) setMetaData(info *api.Item) (err error) {
 	if info.Type != "file" {
-		return fmt.Errorf("%q is %q: %w", o.remote, info.Type, fs.ErrorNotAFile)
+		return errors.Wrapf(fs.ErrorNotAFile, "%q is %q", o.remote, info.Type)
 	}
 	o.hasMetaData = true
 	o.size = info.Size
@@ -869,6 +858,7 @@ func (o *Object) readMetaData(ctx context.Context) (err error) {
 }
 
 // ModTime returns the modification time of the object
+//
 //
 // It attempts to read the objects mtime and if that isn't present the
 // LastModified returned in the http headers
@@ -906,7 +896,7 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (in io.Read
 	}
 	err = o.fs.pacer.Call(func() (bool, error) {
 		resp, err = o.fs.srv.Call(ctx, &opts)
-		return shouldRetry(ctx, resp, err)
+		return shouldRetry(resp, err)
 	})
 	if err != nil {
 		return nil, err
@@ -916,7 +906,7 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (in io.Read
 
 // Update the object with the contents of the io.Reader, modTime and size
 //
-// If existing is set then it updates the object rather than creating a new one.
+// If existing is set then it updates the object rather than creating a new one
 //
 // The new object may have been created if an error is returned
 func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (err error) {
@@ -944,7 +934,7 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 	err = o.fs.pacer.Call(func() (bool, error) {
 		resp, err = o.fs.srv.CallJSON(ctx, &opts, nil, &info)
 		if err != nil {
-			return shouldRetry(ctx, resp, err)
+			return shouldRetry(resp, err)
 		}
 		// Just check the download URL resolves - sometimes
 		// the URLs returned by premiumize.me don't resolve so
@@ -952,19 +942,19 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 		var u *url.URL
 		u, err = url.Parse(info.URL)
 		if err != nil {
-			return true, fmt.Errorf("failed to parse download URL: %w", err)
+			return true, errors.Wrap(err, "failed to parse download URL")
 		}
 		_, err = net.LookupIP(u.Hostname())
 		if err != nil {
-			return true, fmt.Errorf("failed to resolve download URL: %w", err)
+			return true, errors.Wrap(err, "failed to resolve download URL")
 		}
 		return false, nil
 	})
 	if err != nil {
-		return fmt.Errorf("upload get URL http: %w", err)
+		return errors.Wrap(err, "upload get URL http")
 	}
 	if err = info.AsErr(); err != nil {
-		return fmt.Errorf("upload get URL: %w", err)
+		return errors.Wrap(err, "upload get URL")
 	}
 
 	// if file exists then rename it out the way otherwise uploads can fail
@@ -975,7 +965,7 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 		fs.Debugf(o, "Moving old file out the way to %q", newLeaf)
 		err = o.fs.renameLeaf(ctx, true, oldID, newLeaf)
 		if err != nil {
-			return fmt.Errorf("upload rename old file: %w", err)
+			return errors.Wrap(err, "upload rename old file")
 		}
 		defer func() {
 			// on failed upload rename old file back
@@ -983,7 +973,7 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 				fs.Debugf(o, "Renaming old file back (from %q to %q) since upload failed", leaf, newLeaf)
 				newErr := o.fs.renameLeaf(ctx, true, oldID, leaf)
 				if newErr != nil && err == nil {
-					err = fmt.Errorf("upload renaming old file back: %w", newErr)
+					err = errors.Wrap(newErr, "upload renaming old file back")
 				}
 			}
 		}()
@@ -1003,13 +993,13 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 	var result api.Response
 	err = o.fs.pacer.CallNoRetry(func() (bool, error) {
 		resp, err = o.fs.srv.CallJSON(ctx, &opts, nil, &result)
-		return shouldRetry(ctx, resp, err)
+		return shouldRetry(resp, err)
 	})
 	if err != nil {
-		return fmt.Errorf("upload file http: %w", err)
+		return errors.Wrap(err, "upload file http")
 	}
 	if err = result.AsErr(); err != nil {
-		return fmt.Errorf("upload file: %w", err)
+		return errors.Wrap(err, "upload file")
 	}
 
 	// on successful upload, remove old file if it exists
@@ -1018,7 +1008,7 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 		fs.Debugf(o, "Removing old file")
 		err := o.fs.remove(ctx, oldID)
 		if err != nil {
-			return fmt.Errorf("upload remove old file: %w", err)
+			return errors.Wrap(err, "upload remove old file")
 		}
 	}
 
@@ -1045,13 +1035,13 @@ func (f *Fs) renameLeaf(ctx context.Context, isFile bool, id string, newLeaf str
 	var result api.Response
 	err = f.pacer.Call(func() (bool, error) {
 		resp, err = f.srv.CallJSON(ctx, &opts, nil, &result)
-		return shouldRetry(ctx, resp, err)
+		return shouldRetry(resp, err)
 	})
 	if err != nil {
-		return fmt.Errorf("rename http: %w", err)
+		return errors.Wrap(err, "rename http")
 	}
 	if err = result.AsErr(); err != nil {
-		return fmt.Errorf("rename: %w", err)
+		return errors.Wrap(err, "rename")
 	}
 	return nil
 }
@@ -1070,13 +1060,13 @@ func (f *Fs) remove(ctx context.Context, id string) (err error) {
 	var result api.Response
 	err = f.pacer.Call(func() (bool, error) {
 		resp, err = f.srv.CallJSON(ctx, &opts, nil, &result)
-		return shouldRetry(ctx, resp, err)
+		return shouldRetry(resp, err)
 	})
 	if err != nil {
-		return fmt.Errorf("remove http: %w", err)
+		return errors.Wrap(err, "remove http")
 	}
 	if err = result.AsErr(); err != nil {
-		return fmt.Errorf("remove: %w", err)
+		return errors.Wrap(err, "remove")
 	}
 	return nil
 }
@@ -1085,7 +1075,7 @@ func (f *Fs) remove(ctx context.Context, id string) (err error) {
 func (o *Object) Remove(ctx context.Context) error {
 	err := o.readMetaData(ctx)
 	if err != nil {
-		return fmt.Errorf("Remove: Failed to read metadata: %w", err)
+		return errors.Wrap(err, "Remove: Failed to read metadata")
 	}
 	return o.fs.remove(ctx, o.id)
 }

@@ -1,7 +1,7 @@
-//go:build linux || (darwin && amd64)
+// Package mount implements a FUSE mounting system for rclone remotes.
+
 // +build linux darwin,amd64
 
-// Package mount2 implements a FUSE mounting system for rclone remotes.
 package mount2
 
 import (
@@ -24,10 +24,11 @@ func init() {
 // mountOptions configures the options from the command line flags
 //
 // man mount.fuse for more info and note the -o flag for other options
-func mountOptions(fsys *FS, f fs.Fs, opt *mountlib.Options) (mountOpts *fuse.MountOptions) {
+func mountOptions(fsys *FS, f fs.Fs) (mountOpts *fuse.MountOptions) {
+	device := f.Name() + ":" + f.Root()
 	mountOpts = &fuse.MountOptions{
 		AllowOther:    fsys.opt.AllowOther,
-		FsName:        opt.DeviceName,
+		FsName:        device,
 		Name:          "rclone",
 		DisableXAttrs: true,
 		Debug:         fsys.opt.DebugFUSE,
@@ -95,6 +96,9 @@ func mountOptions(fsys *FS, f fs.Fs, opt *mountlib.Options) (mountOpts *fuse.Mou
 	}
 	var opts []string
 	// FIXME doesn't work opts = append(opts, fmt.Sprintf("max_readahead=%d", maxReadAhead))
+	if fsys.opt.AllowNonEmpty {
+		opts = append(opts, "nonempty")
+	}
 	if fsys.opt.AllowOther {
 		opts = append(opts, "allow_other")
 	}
@@ -115,7 +119,7 @@ func mountOptions(fsys *FS, f fs.Fs, opt *mountlib.Options) (mountOpts *fuse.Mou
 	if runtime.GOOS == "darwin" {
 		opts = append(opts,
 			// VolumeName sets the volume name shown in Finder.
-			fmt.Sprintf("volname=%s", opt.VolumeName),
+			fmt.Sprintf("volname=%s", device),
 
 			// NoAppleXattr makes OSXFUSE disallow extended attributes with the
 			// prefix "com.apple.". This disables persistent Finder state and
@@ -145,16 +149,9 @@ func mountOptions(fsys *FS, f fs.Fs, opt *mountlib.Options) (mountOpts *fuse.Mou
 // report an error when fusermount is called.
 func mount(VFS *vfs.VFS, mountpoint string, opt *mountlib.Options) (<-chan error, func() error, error) {
 	f := VFS.Fs()
-	if err := mountlib.CheckOverlap(f, mountpoint); err != nil {
-		return nil, nil, err
-	}
-	if err := mountlib.CheckAllowNonEmpty(mountpoint, opt); err != nil {
-		return nil, nil, err
-	}
 	fs.Debugf(f, "Mounting on %q", mountpoint)
 
 	fsys := NewFS(VFS, opt)
-
 	// nodeFsOpts := &fusefs.PathNodeFsOptions{
 	// 	ClientInodes: false,
 	// 	Debug:        mountlib.DebugFUSE,
@@ -169,7 +166,7 @@ func mount(VFS *vfs.VFS, mountpoint string, opt *mountlib.Options) (<-chan error
 	//mOpts.Debug = mountlib.DebugFUSE
 
 	//conn := fusefs.NewFileSystemConnector(nodeFs.Root(), mOpts)
-	mountOpts := mountOptions(fsys, f, opt)
+	mountOpts := mountOptions(fsys, f)
 
 	// FIXME fill out
 	opts := fusefs.Options{

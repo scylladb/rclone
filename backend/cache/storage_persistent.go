@@ -1,4 +1,3 @@
-//go:build !plan9 && !js
 // +build !plan9,!js
 
 package cache
@@ -9,6 +8,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"path"
 	"strconv"
@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/walk"
 	bolt "go.etcd.io/bbolt"
@@ -118,11 +119,11 @@ func (b *Persistent) connect() error {
 
 	err = os.MkdirAll(b.dataPath, os.ModePerm)
 	if err != nil {
-		return fmt.Errorf("failed to create a data directory %q: %w", b.dataPath, err)
+		return errors.Wrapf(err, "failed to create a data directory %q", b.dataPath)
 	}
 	b.db, err = bolt.Open(b.dbPath, 0644, &bolt.Options{Timeout: b.features.DbWaitTime})
 	if err != nil {
-		return fmt.Errorf("failed to open a cache connection to %q: %w", b.dbPath, err)
+		return errors.Wrapf(err, "failed to open a cache connection to %q", b.dbPath)
 	}
 	if b.features.PurgeDb {
 		b.Purge()
@@ -174,7 +175,7 @@ func (b *Persistent) GetDir(remote string) (*Directory, error) {
 	err := b.db.View(func(tx *bolt.Tx) error {
 		bucket := b.getBucket(remote, false, tx)
 		if bucket == nil {
-			return fmt.Errorf("couldn't open bucket (%v)", remote)
+			return errors.Errorf("couldn't open bucket (%v)", remote)
 		}
 
 		data := bucket.Get([]byte("."))
@@ -182,7 +183,7 @@ func (b *Persistent) GetDir(remote string) (*Directory, error) {
 			return json.Unmarshal(data, cd)
 		}
 
-		return fmt.Errorf("%v not found", remote)
+		return errors.Errorf("%v not found", remote)
 	})
 
 	return cd, err
@@ -207,7 +208,7 @@ func (b *Persistent) AddBatchDir(cachedDirs []*Directory) error {
 			bucket = b.getBucket(cachedDirs[0].Dir, true, tx)
 		}
 		if bucket == nil {
-			return fmt.Errorf("couldn't open bucket (%v)", cachedDirs[0].Dir)
+			return errors.Errorf("couldn't open bucket (%v)", cachedDirs[0].Dir)
 		}
 
 		for _, cachedDir := range cachedDirs {
@@ -224,7 +225,7 @@ func (b *Persistent) AddBatchDir(cachedDirs []*Directory) error {
 
 			encoded, err := json.Marshal(cachedDir)
 			if err != nil {
-				return fmt.Errorf("couldn't marshal object (%v): %v", cachedDir, err)
+				return errors.Errorf("couldn't marshal object (%v): %v", cachedDir, err)
 			}
 			err = b.Put([]byte("."), encoded)
 			if err != nil {
@@ -242,17 +243,17 @@ func (b *Persistent) GetDirEntries(cachedDir *Directory) (fs.DirEntries, error) 
 	err := b.db.View(func(tx *bolt.Tx) error {
 		bucket := b.getBucket(cachedDir.abs(), false, tx)
 		if bucket == nil {
-			return fmt.Errorf("couldn't open bucket (%v)", cachedDir.abs())
+			return errors.Errorf("couldn't open bucket (%v)", cachedDir.abs())
 		}
 
 		val := bucket.Get([]byte("."))
 		if val != nil {
 			err := json.Unmarshal(val, cachedDir)
 			if err != nil {
-				return fmt.Errorf("error during unmarshalling obj: %w", err)
+				return errors.Errorf("error during unmarshalling obj: %v", err)
 			}
 		} else {
-			return fmt.Errorf("missing cached dir: %v", cachedDir)
+			return errors.Errorf("missing cached dir: %v", cachedDir)
 		}
 
 		c := bucket.Cursor()
@@ -267,7 +268,7 @@ func (b *Persistent) GetDirEntries(cachedDir *Directory) (fs.DirEntries, error) 
 				// we try to find a cached meta for the dir
 				currentBucket := c.Bucket().Bucket(k)
 				if currentBucket == nil {
-					return fmt.Errorf("couldn't open bucket (%v)", string(k))
+					return errors.Errorf("couldn't open bucket (%v)", string(k))
 				}
 
 				metaKey := currentBucket.Get([]byte("."))
@@ -316,7 +317,7 @@ func (b *Persistent) RemoveDir(fp string) error {
 		err = b.db.Update(func(tx *bolt.Tx) error {
 			bucket := b.getBucket(cleanPath(parentDir), false, tx)
 			if bucket == nil {
-				return fmt.Errorf("couldn't open bucket (%v)", fp)
+				return errors.Errorf("couldn't open bucket (%v)", fp)
 			}
 			// delete the cached dir
 			err := bucket.DeleteBucket([]byte(cleanPath(dirName)))
@@ -376,13 +377,13 @@ func (b *Persistent) GetObject(cachedObject *Object) (err error) {
 	return b.db.View(func(tx *bolt.Tx) error {
 		bucket := b.getBucket(cachedObject.Dir, false, tx)
 		if bucket == nil {
-			return fmt.Errorf("couldn't open parent bucket for %v", cachedObject.Dir)
+			return errors.Errorf("couldn't open parent bucket for %v", cachedObject.Dir)
 		}
 		val := bucket.Get([]byte(cachedObject.Name))
 		if val != nil {
 			return json.Unmarshal(val, cachedObject)
 		}
-		return fmt.Errorf("couldn't find object (%v)", cachedObject.Name)
+		return errors.Errorf("couldn't find object (%v)", cachedObject.Name)
 	})
 }
 
@@ -391,16 +392,16 @@ func (b *Persistent) AddObject(cachedObject *Object) error {
 	return b.db.Update(func(tx *bolt.Tx) error {
 		bucket := b.getBucket(cachedObject.Dir, true, tx)
 		if bucket == nil {
-			return fmt.Errorf("couldn't open parent bucket for %v", cachedObject)
+			return errors.Errorf("couldn't open parent bucket for %v", cachedObject)
 		}
 		// cache Object Info
 		encoded, err := json.Marshal(cachedObject)
 		if err != nil {
-			return fmt.Errorf("couldn't marshal object (%v) info: %v", cachedObject, err)
+			return errors.Errorf("couldn't marshal object (%v) info: %v", cachedObject, err)
 		}
 		err = bucket.Put([]byte(cachedObject.Name), encoded)
 		if err != nil {
-			return fmt.Errorf("couldn't cache object (%v) info: %v", cachedObject, err)
+			return errors.Errorf("couldn't cache object (%v) info: %v", cachedObject, err)
 		}
 		return nil
 	})
@@ -412,7 +413,7 @@ func (b *Persistent) RemoveObject(fp string) error {
 	return b.db.Update(func(tx *bolt.Tx) error {
 		bucket := b.getBucket(cleanPath(parentDir), false, tx)
 		if bucket == nil {
-			return fmt.Errorf("couldn't open parent bucket for %v", cleanPath(parentDir))
+			return errors.Errorf("couldn't open parent bucket for %v", cleanPath(parentDir))
 		}
 		err := bucket.Delete([]byte(cleanPath(objName)))
 		if err != nil {
@@ -444,7 +445,7 @@ func (b *Persistent) HasEntry(remote string) bool {
 	err := b.db.View(func(tx *bolt.Tx) error {
 		bucket := b.getBucket(dir, false, tx)
 		if bucket == nil {
-			return fmt.Errorf("couldn't open parent bucket for %v", remote)
+			return errors.Errorf("couldn't open parent bucket for %v", remote)
 		}
 		if f := bucket.Bucket([]byte(name)); f != nil {
 			return nil
@@ -453,9 +454,12 @@ func (b *Persistent) HasEntry(remote string) bool {
 			return nil
 		}
 
-		return fmt.Errorf("couldn't find object (%v)", remote)
+		return errors.Errorf("couldn't find object (%v)", remote)
 	})
-	return err == nil
+	if err == nil {
+		return true
+	}
+	return false
 }
 
 // HasChunk confirms the existence of a single chunk of an object
@@ -472,7 +476,7 @@ func (b *Persistent) GetChunk(cachedObject *Object, offset int64) ([]byte, error
 	var data []byte
 
 	fp := path.Join(b.dataPath, cachedObject.abs(), strconv.FormatInt(offset, 10))
-	data, err := os.ReadFile(fp)
+	data, err := ioutil.ReadFile(fp)
 	if err != nil {
 		return nil, err
 	}
@@ -485,7 +489,7 @@ func (b *Persistent) AddChunk(fp string, data []byte, offset int64) error {
 	_ = os.MkdirAll(path.Join(b.dataPath, fp), os.ModePerm)
 
 	filePath := path.Join(b.dataPath, fp, strconv.FormatInt(offset, 10))
-	err := os.WriteFile(filePath, data, os.ModePerm)
+	err := ioutil.WriteFile(filePath, data, os.ModePerm)
 	if err != nil {
 		return err
 	}
@@ -550,7 +554,7 @@ func (b *Persistent) CleanChunksBySize(maxSize int64) {
 	err := b.db.Update(func(tx *bolt.Tx) error {
 		dataTsBucket := tx.Bucket([]byte(DataTsBucket))
 		if dataTsBucket == nil {
-			return fmt.Errorf("couldn't open (%v) bucket", DataTsBucket)
+			return errors.Errorf("Couldn't open (%v) bucket", DataTsBucket)
 		}
 		// iterate through ts
 		c := dataTsBucket.Cursor()
@@ -728,7 +732,7 @@ func (b *Persistent) GetChunkTs(path string, offset int64) (time.Time, error) {
 				return nil
 			}
 		}
-		return fmt.Errorf("not found %v-%v", path, offset)
+		return errors.Errorf("not found %v-%v", path, offset)
 	})
 
 	return t, err
@@ -768,7 +772,7 @@ func (b *Persistent) addPendingUpload(destPath string, started bool) error {
 	return b.db.Update(func(tx *bolt.Tx) error {
 		bucket, err := tx.CreateBucketIfNotExists([]byte(tempBucket))
 		if err != nil {
-			return fmt.Errorf("couldn't bucket for %v", tempBucket)
+			return errors.Errorf("couldn't bucket for %v", tempBucket)
 		}
 		tempObj := &tempUploadInfo{
 			DestPath: destPath,
@@ -779,11 +783,11 @@ func (b *Persistent) addPendingUpload(destPath string, started bool) error {
 		// cache Object Info
 		encoded, err := json.Marshal(tempObj)
 		if err != nil {
-			return fmt.Errorf("couldn't marshal object (%v) info: %v", destPath, err)
+			return errors.Errorf("couldn't marshal object (%v) info: %v", destPath, err)
 		}
 		err = bucket.Put([]byte(destPath), encoded)
 		if err != nil {
-			return fmt.Errorf("couldn't cache object (%v) info: %v", destPath, err)
+			return errors.Errorf("couldn't cache object (%v) info: %v", destPath, err)
 		}
 
 		return nil
@@ -798,7 +802,7 @@ func (b *Persistent) getPendingUpload(inRoot string, waitTime time.Duration) (de
 	err = b.db.Update(func(tx *bolt.Tx) error {
 		bucket, err := tx.CreateBucketIfNotExists([]byte(tempBucket))
 		if err != nil {
-			return fmt.Errorf("couldn't bucket for %v", tempBucket)
+			return errors.Errorf("couldn't bucket for %v", tempBucket)
 		}
 
 		c := bucket.Cursor()
@@ -831,7 +835,7 @@ func (b *Persistent) getPendingUpload(inRoot string, waitTime time.Duration) (de
 			return nil
 		}
 
-		return fmt.Errorf("no pending upload found")
+		return errors.Errorf("no pending upload found")
 	})
 
 	return destPath, err
@@ -842,14 +846,14 @@ func (b *Persistent) SearchPendingUpload(remote string) (started bool, err error
 	err = b.db.View(func(tx *bolt.Tx) error {
 		bucket := tx.Bucket([]byte(tempBucket))
 		if bucket == nil {
-			return fmt.Errorf("couldn't bucket for %v", tempBucket)
+			return errors.Errorf("couldn't bucket for %v", tempBucket)
 		}
 
 		var tempObj = &tempUploadInfo{}
 		v := bucket.Get([]byte(remote))
 		err = json.Unmarshal(v, tempObj)
 		if err != nil {
-			return fmt.Errorf("pending upload (%v) not found %v", remote, err)
+			return errors.Errorf("pending upload (%v) not found %v", remote, err)
 		}
 
 		started = tempObj.Started
@@ -864,7 +868,7 @@ func (b *Persistent) searchPendingUploadFromDir(dir string) (remotes []string, e
 	err = b.db.View(func(tx *bolt.Tx) error {
 		bucket := tx.Bucket([]byte(tempBucket))
 		if bucket == nil {
-			return fmt.Errorf("couldn't bucket for %v", tempBucket)
+			return errors.Errorf("couldn't bucket for %v", tempBucket)
 		}
 
 		c := bucket.Cursor()
@@ -894,22 +898,22 @@ func (b *Persistent) rollbackPendingUpload(remote string) error {
 	return b.db.Update(func(tx *bolt.Tx) error {
 		bucket, err := tx.CreateBucketIfNotExists([]byte(tempBucket))
 		if err != nil {
-			return fmt.Errorf("couldn't bucket for %v", tempBucket)
+			return errors.Errorf("couldn't bucket for %v", tempBucket)
 		}
 		var tempObj = &tempUploadInfo{}
 		v := bucket.Get([]byte(remote))
 		err = json.Unmarshal(v, tempObj)
 		if err != nil {
-			return fmt.Errorf("pending upload (%v) not found: %w", remote, err)
+			return errors.Errorf("pending upload (%v) not found %v", remote, err)
 		}
 		tempObj.Started = false
 		v2, err := json.Marshal(tempObj)
 		if err != nil {
-			return fmt.Errorf("pending upload not updated: %w", err)
+			return errors.Errorf("pending upload not updated %v", err)
 		}
 		err = bucket.Put([]byte(tempObj.DestPath), v2)
 		if err != nil {
-			return fmt.Errorf("pending upload not updated: %w", err)
+			return errors.Errorf("pending upload not updated %v", err)
 		}
 		return nil
 	})
@@ -922,7 +926,7 @@ func (b *Persistent) removePendingUpload(remote string) error {
 	return b.db.Update(func(tx *bolt.Tx) error {
 		bucket, err := tx.CreateBucketIfNotExists([]byte(tempBucket))
 		if err != nil {
-			return fmt.Errorf("couldn't bucket for %v", tempBucket)
+			return errors.Errorf("couldn't bucket for %v", tempBucket)
 		}
 		return bucket.Delete([]byte(remote))
 	})
@@ -937,17 +941,17 @@ func (b *Persistent) updatePendingUpload(remote string, fn func(item *tempUpload
 	return b.db.Update(func(tx *bolt.Tx) error {
 		bucket, err := tx.CreateBucketIfNotExists([]byte(tempBucket))
 		if err != nil {
-			return fmt.Errorf("couldn't bucket for %v", tempBucket)
+			return errors.Errorf("couldn't bucket for %v", tempBucket)
 		}
 
 		var tempObj = &tempUploadInfo{}
 		v := bucket.Get([]byte(remote))
 		err = json.Unmarshal(v, tempObj)
 		if err != nil {
-			return fmt.Errorf("pending upload (%v) not found %v", remote, err)
+			return errors.Errorf("pending upload (%v) not found %v", remote, err)
 		}
 		if tempObj.Started {
-			return fmt.Errorf("pending upload already started %v", remote)
+			return errors.Errorf("pending upload already started %v", remote)
 		}
 		err = fn(tempObj)
 		if err != nil {
@@ -965,11 +969,11 @@ func (b *Persistent) updatePendingUpload(remote string, fn func(item *tempUpload
 		}
 		v2, err := json.Marshal(tempObj)
 		if err != nil {
-			return fmt.Errorf("pending upload not updated: %w", err)
+			return errors.Errorf("pending upload not updated %v", err)
 		}
 		err = bucket.Put([]byte(tempObj.DestPath), v2)
 		if err != nil {
-			return fmt.Errorf("pending upload not updated: %w", err)
+			return errors.Errorf("pending upload not updated %v", err)
 		}
 
 		return nil
@@ -1010,11 +1014,11 @@ func (b *Persistent) ReconcileTempUploads(ctx context.Context, cacheFs *Fs) erro
 			// cache Object Info
 			encoded, err := json.Marshal(tempObj)
 			if err != nil {
-				return fmt.Errorf("couldn't marshal object (%v) info: %v", queuedEntry, err)
+				return errors.Errorf("couldn't marshal object (%v) info: %v", queuedEntry, err)
 			}
 			err = bucket.Put([]byte(destPath), encoded)
 			if err != nil {
-				return fmt.Errorf("couldn't cache object (%v) info: %v", destPath, err)
+				return errors.Errorf("couldn't cache object (%v) info: %v", destPath, err)
 			}
 			fs.Debugf(cacheFs, "reconciled temporary upload: %v", destPath)
 		}

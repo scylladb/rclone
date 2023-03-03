@@ -14,7 +14,7 @@ const (
 	timeFormat = `"` + time.RFC3339 + `"`
 )
 
-// Time represents date and time information for the
+// Time represents represents date and time information for the
 // box API, by using RFC3339
 type Time time.Time
 
@@ -36,13 +36,13 @@ func (t *Time) UnmarshalJSON(data []byte) error {
 
 // Error is returned from box when things go wrong
 type Error struct {
-	Type        string          `json:"type"`
-	Status      int             `json:"status"`
-	Code        string          `json:"code"`
-	ContextInfo json.RawMessage `json:"context_info"`
-	HelpURL     string          `json:"help_url"`
-	Message     string          `json:"message"`
-	RequestID   string          `json:"request_id"`
+	Type        string `json:"type"`
+	Status      int    `json:"status"`
+	Code        string `json:"code"`
+	ContextInfo json.RawMessage
+	HelpURL     string `json:"help_url"`
+	Message     string `json:"message"`
+	RequestID   string `json:"request_id"`
 }
 
 // Error returns a string for the error and satisfies the error interface
@@ -61,7 +61,7 @@ func (e *Error) Error() string {
 var _ error = (*Error)(nil)
 
 // ItemFields are the fields needed for FileInfo
-var ItemFields = "type,id,sequence_id,etag,sha1,name,size,created_at,modified_at,content_created_at,content_modified_at,item_status,shared_link,owned_by"
+var ItemFields = "type,id,sequence_id,etag,sha1,name,size,created_at,modified_at,content_created_at,content_modified_at,item_status,shared_link"
 
 // Types of things in Item
 const (
@@ -90,12 +90,6 @@ type Item struct {
 		URL    string `json:"url,omitempty"`
 		Access string `json:"access,omitempty"`
 	} `json:"shared_link"`
-	OwnedBy struct {
-		Type  string `json:"type"`
-		ID    string `json:"id"`
-		Name  string `json:"name"`
-		Login string `json:"login"`
-	} `json:"owned_by"`
 }
 
 // ModTime returns the modification time of the item
@@ -109,11 +103,10 @@ func (i *Item) ModTime() (t time.Time) {
 
 // FolderItems is returned from the GetFolderItems call
 type FolderItems struct {
-	TotalCount int     `json:"total_count"`
-	Entries    []Item  `json:"entries"`
-	Offset     int     `json:"offset"`
-	Limit      int     `json:"limit"`
-	NextMarker *string `json:"next_marker,omitempty"`
+	TotalCount int    `json:"total_count"`
+	Entries    []Item `json:"entries"`
+	Offset     int    `json:"offset"`
+	Limit      int    `json:"limit"`
 	Order      []struct {
 		By        string `json:"by"`
 		Direction string `json:"direction"`
@@ -137,38 +130,6 @@ type UploadFile struct {
 	Parent            Parent `json:"parent"`
 	ContentCreatedAt  Time   `json:"content_created_at"`
 	ContentModifiedAt Time   `json:"content_modified_at"`
-}
-
-// PreUploadCheck is the request for upload preflight check
-type PreUploadCheck struct {
-	Name   string `json:"name"`
-	Parent Parent `json:"parent"`
-	Size   *int64 `json:"size,omitempty"`
-}
-
-// PreUploadCheckResponse is the response from upload preflight check
-// if successful
-type PreUploadCheckResponse struct {
-	UploadToken string `json:"upload_token"`
-	UploadURL   string `json:"upload_url"`
-}
-
-// PreUploadCheckConflict is returned in the ContextInfo error field
-// from PreUploadCheck when the error code is "item_name_in_use"
-type PreUploadCheckConflict struct {
-	Conflicts struct {
-		Type        string `json:"type"`
-		ID          string `json:"id"`
-		FileVersion struct {
-			Type string `json:"type"`
-			ID   string `json:"id"`
-			Sha1 string `json:"sha1"`
-		} `json:"file_version"`
-		SequenceID string `json:"sequence_id"`
-		Etag       string `json:"etag"`
-		Sha1       string `json:"sha1"`
-		Name       string `json:"name"`
-	} `json:"conflicts"`
 }
 
 // UpdateFileModTime is used in Update File Info

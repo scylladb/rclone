@@ -1,12 +1,11 @@
-// Package cat provides the cat command.
 package cat
 
 import (
 	"context"
 	"io"
+	"io/ioutil"
 	"log"
 	"os"
-	"strings"
 
 	"github.com/rclone/rclone/cmd"
 	"github.com/rclone/rclone/fs/config/flags"
@@ -26,18 +25,17 @@ var (
 func init() {
 	cmd.Root.AddCommand(commandDefinition)
 	cmdFlags := commandDefinition.Flags()
-	flags.Int64VarP(cmdFlags, &head, "head", "", head, "Only print the first N characters")
-	flags.Int64VarP(cmdFlags, &tail, "tail", "", tail, "Only print the last N characters")
-	flags.Int64VarP(cmdFlags, &offset, "offset", "", offset, "Start printing at offset N (or from end if -ve)")
-	flags.Int64VarP(cmdFlags, &count, "count", "", count, "Only print N characters")
-	flags.BoolVarP(cmdFlags, &discard, "discard", "", discard, "Discard the output instead of printing")
+	flags.Int64VarP(cmdFlags, &head, "head", "", head, "Only print the first N characters.")
+	flags.Int64VarP(cmdFlags, &tail, "tail", "", tail, "Only print the last N characters.")
+	flags.Int64VarP(cmdFlags, &offset, "offset", "", offset, "Start printing at offset N (or from end if -ve).")
+	flags.Int64VarP(cmdFlags, &count, "count", "", count, "Only print N characters.")
+	flags.BoolVarP(cmdFlags, &discard, "discard", "", discard, "Discard the output instead of printing.")
 }
 
 var commandDefinition = &cobra.Command{
 	Use:   "cat remote:path",
 	Short: `Concatenates any files and sends them to stdout.`,
-	// Warning! "|" will be replaced by backticks below
-	Long: strings.ReplaceAll(`
+	Long: `
 rclone cat sends any files to standard output.
 
 You can use it like this to output a single file
@@ -52,14 +50,11 @@ Or like this to output any .txt files in dir or its subdirectories.
 
     rclone --include "*.txt" cat remote:path/to/dir
 
-Use the |--head| flag to print characters only at the start, |--tail| for
-the end and |--offset| and |--count| to print a section in the middle.
+Use the --head flag to print characters only at the start, --tail for
+the end and --offset and --count to print a section in the middle.
 Note that if offset is negative it will count from the end, so
-|--offset -1 --count 1| is equivalent to |--tail 1|.
-`, "|", "`"),
-	Annotations: map[string]string{
-		"versionIntroduced": "v1.33",
-	},
+--offset -1 --count 1 is equivalent to --tail 1.
+`,
 	Run: func(command *cobra.Command, args []string) {
 		usedOffset := offset != 0 || count >= 0
 		usedHead := head > 0
@@ -79,7 +74,7 @@ Note that if offset is negative it will count from the end, so
 		fsrc := cmd.NewFsSrc(args)
 		var w io.Writer = os.Stdout
 		if discard {
-			w = io.Discard
+			w = ioutil.Discard
 		}
 		cmd.Run(false, false, command, func() error {
 			return operations.Cat(context.Background(), fsrc, w, offset, count)

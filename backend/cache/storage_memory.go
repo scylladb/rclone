@@ -1,15 +1,14 @@
-//go:build !plan9 && !js
 // +build !plan9,!js
 
 package cache
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
 	cache "github.com/patrickmn/go-cache"
+	"github.com/pkg/errors"
 	"github.com/rclone/rclone/fs"
 )
 
@@ -53,7 +52,7 @@ func (m *Memory) GetChunk(cachedObject *Object, offset int64) ([]byte, error) {
 		return data, nil
 	}
 
-	return nil, fmt.Errorf("couldn't get cached object data at offset %v", offset)
+	return nil, errors.Errorf("couldn't get cached object data at offset %v", offset)
 }
 
 // AddChunk adds a new chunk of a cached object
@@ -76,7 +75,10 @@ func (m *Memory) CleanChunksByAge(chunkAge time.Duration) {
 
 // CleanChunksByNeed will cleanup chunks after the FS passes a specific chunk
 func (m *Memory) CleanChunksByNeed(offset int64) {
-	for key := range m.db.Items() {
+	var items map[string]cache.Item
+
+	items = m.db.Items()
+	for key := range items {
 		sepIdx := strings.LastIndex(key, "-")
 		keyOffset, err := strconv.ParseInt(key[sepIdx+1:], 10, 64)
 		if err != nil {

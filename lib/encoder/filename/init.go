@@ -1,4 +1,3 @@
-// Package filename provides utilities for encoder.
 package filename
 
 import (
@@ -27,12 +26,9 @@ var (
 
 const (
 	tableUncompressed = 0
-
-	tableSCSU      = 59
-	tableSCSUPlain = 60
-	tableRLE       = 61
-	tableCustom    = 62
-	tableReserved  = 63
+	tableRLE          = 61
+	tableCustom       = 62
+	tableReserved     = 63
 )
 
 // predefined tables as base64 URL encoded string.
@@ -49,16 +45,8 @@ var tablesData = [64]string{
 	4: "ExDoSTD___-tfXfhJ0hKSkryTxU=",
 	// Base64
 	5: "JRDIcQf_______8PgIiIiIgINkggARHlkQwSSCCBxHFYINHdfXI=",
-	// Hex plus a bit...
-	6: "E5CxwAHm9sYcAlmWZVvMHA4Y5jw=",
-	// Hex, upper case letters.
-	7: "FICxgAMMAGC3YwMthe3DWM_wDAAQ",
 
 	// Special tables:
-	// SCSU and a fairly generic table:
-	tableSCSU: "UxAgZmEB-RYPU8hrnAk6uMgpTNQMB5MGRBx0D3T0JjyUyY-yOi5CoGgktbAktSh7d36HtPTFu7SXJ7FYw_AYmA74ZH2vWgc8O6Z5jLnWnsFqU_4B",
-	// SCSU with no table...
-	tableSCSUPlain: "",
 	// Compressed data has its own table.
 	tableCustom: "",
 	// Reserved for extension.

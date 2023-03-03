@@ -2,7 +2,6 @@ package vfs
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path"
 	"sort"
@@ -11,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/dirtree"
 	"github.com/rclone/rclone/fs/list"
@@ -72,47 +72,6 @@ func (d *Dir) String() string {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return d.path + "/"
-}
-
-// Dumps the directory tree to the string builder with the given indent
-func (d *Dir) dumpIndent(out *strings.Builder, indent string) {
-	if d == nil {
-		fmt.Fprintf(out, "%s<nil *Dir>\n", indent)
-		return
-	}
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-	fmt.Fprintf(out, "%sPath: %s\n", indent, d.path)
-	fmt.Fprintf(out, "%sEntry: %v\n", indent, d.entry)
-	fmt.Fprintf(out, "%sRead: %v\n", indent, d.read)
-	fmt.Fprintf(out, "%s- items %d\n", indent, len(d.items))
-	// Sort?
-	for leaf, node := range d.items {
-		switch x := node.(type) {
-		case *Dir:
-			fmt.Fprintf(out, "%s  %s/ - %v\n", indent, leaf, x)
-			// check the parent is correct
-			if x.parent != d {
-				fmt.Fprintf(out, "%s  PARENT POINTER WRONG\n", indent)
-			}
-			x.dumpIndent(out, indent+"\t")
-		case *File:
-			fmt.Fprintf(out, "%s  %s - %v\n", indent, leaf, x)
-		default:
-			panic("bad dir entry")
-		}
-	}
-	fmt.Fprintf(out, "%s- virtual %d\n", indent, len(d.virtual))
-	for leaf, state := range d.virtual {
-		fmt.Fprintf(out, "%s  %s - %v\n", indent, leaf, state)
-	}
-}
-
-// Dumps a nicely formatted directory tree to a string
-func (d *Dir) dump() string {
-	var out strings.Builder
-	d.dumpIndent(&out, "")
-	return out.String()
 }
 
 // IsFile returns false for Dir - satisfies Node interface
@@ -186,7 +145,7 @@ func (d *Dir) ForgetAll() (hasVirtual bool) {
 			}
 		}
 	}
-	// Purge any unnecessary virtual entries
+	// Purge any unecessary virtual entries
 	d._purgeVirtual()
 
 	d.read = time.Time{}
@@ -311,56 +270,21 @@ func (d *Dir) _age(when time.Time) (age time.Duration, stale bool) {
 	return
 }
 
-// renameTree renames the directories under this directory
-//
-// path should be the desired path
-func (d *Dir) renameTree(dirPath string) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	// Make sure the path is correct for each node
-	if d.path != dirPath {
-		fs.Debugf(d.path, "Renaming to %q", dirPath)
-		d.path = dirPath
-		d.entry = fs.NewDirCopy(context.TODO(), d.entry).SetRemote(dirPath)
-	}
-
-	// Do the same to any child directories
-	for leaf, node := range d.items {
-		if dir, ok := node.(*Dir); ok {
-			dir.renameTree(path.Join(dirPath, leaf))
-		}
-	}
-}
-
 // rename should be called after the directory is renamed
 //
 // Reset the directory to new state, discarding all the objects and
 // reading everything again
 func (d *Dir) rename(newParent *Dir, fsDir fs.Directory) {
 	d.ForgetAll()
-
 	d.modTimeMu.Lock()
 	d.modTime = fsDir.ModTime(context.TODO())
 	d.modTimeMu.Unlock()
 	d.mu.Lock()
-	oldPath := d.path
 	d.parent = newParent
 	d.entry = fsDir
 	d.path = fsDir.Remote()
-	newPath := d.path
 	d.read = time.Time{}
 	d.mu.Unlock()
-
-	// Rename any remaining items in the tree that we couldn't forget
-	d.renameTree(d.path)
-
-	// Rename in the cache
-	if d.vfs.cache != nil && d.vfs.cache.DirExists(oldPath) {
-		if err := d.vfs.cache.DirRename(oldPath, newPath); err != nil {
-			fs.Infof(d, "Dir.Rename failed in Cache: %v", err)
-		}
-	}
 }
 
 // addObject adds a new object or directory to the directory
@@ -506,7 +430,7 @@ func (d *Dir) _purgeVirtual() {
 				// if remote can have empty directories then a
 				// new dir will be read in the listing
 				d._deleteVirtual(name)
-				//} else {
+			} else {
 				// leave the empty directory marker
 			}
 		case vAddFile:
@@ -555,7 +479,7 @@ func (d *Dir) _newManageVirtuals() manageVirtuals {
 
 // This should be called for every entry added to the directory
 //
-// It returns true if this entry should be skipped.
+// It returns true if this entry should be skipped
 //
 // must be called with the Dir lock held
 func (mv manageVirtuals) add(d *Dir, name string) bool {
@@ -650,7 +574,7 @@ func (d *Dir) _readDirFromEntries(entries fs.DirEntries, dirTree dirtree.DirTree
 				}
 			}
 		default:
-			err = fmt.Errorf("unknown type %T", item)
+			err = errors.Errorf("unknown type %T", item)
 			fs.Errorf(d, "readDir error: %v", err)
 			return err
 		}
@@ -711,7 +635,7 @@ func (d *Dir) stat(leaf string) (Node, error) {
 			if strings.ToLower(name) == leafLower {
 				if ok {
 					// duplicate case insensitive match is an error
-					return nil, fmt.Errorf("duplicate filename %q detected with --vfs-case-insensitive set", leaf)
+					return nil, errors.Errorf("duplicate filename %q detected with --vfs-case-insensitive set", leaf)
 				}
 				// found a case insensitive match
 				ok = true
@@ -842,23 +766,6 @@ func (d *Dir) Open(flags int) (fd Handle, err error) {
 // Create makes a new file node
 func (d *Dir) Create(name string, flags int) (*File, error) {
 	// fs.Debugf(path, "Dir.Create")
-	// Return existing node if one exists
-	node, err := d.stat(name)
-	switch err {
-	case ENOENT:
-		// not found, carry on
-	case nil:
-		// found so check what it is
-		if node.IsFile() {
-			return node.(*File), err
-		}
-		return nil, EEXIST // EISDIR would be better but we don't have that
-	default:
-		// a different error - report
-		fs.Errorf(d, "Dir.Create stat failed: %v", err)
-		return nil, err
-	}
-	// node doesn't exist so create it
 	if d.vfs.Opt.ReadOnly {
 		return nil, EROFS
 	}
@@ -972,7 +879,6 @@ func (d *Dir) RemoveName(name string) error {
 
 // Rename the file
 func (d *Dir) Rename(oldName, newName string, destDir *Dir) error {
-	// fs.Debugf(d, "BEFORE\n%s", d.dump())
 	if d.vfs.Opt.ReadOnly {
 		return EROFS
 	}
@@ -1002,14 +908,14 @@ func (d *Dir) Rename(oldName, newName string, destDir *Dir) error {
 				return err
 			}
 		} else {
-			err := fmt.Errorf("Fs %q can't rename file that is not a vfs.File", d.f)
+			err := errors.Errorf("Fs %q can't rename file that is not a vfs.File", d.f)
 			fs.Errorf(oldPath, "Dir.Rename error: %v", err)
 			return err
 		}
 	case fs.Directory:
 		features := d.f.Features()
 		if features.DirMove == nil && features.Move == nil && features.Copy == nil {
-			err := fmt.Errorf("Fs %q can't rename directories (no DirMove, Move or Copy)", d.f)
+			err := errors.Errorf("Fs %q can't rename directories (no DirMove, Move or Copy)", d.f)
 			fs.Errorf(oldPath, "Dir.Rename error: %v", err)
 			return err
 		}
@@ -1029,7 +935,7 @@ func (d *Dir) Rename(oldName, newName string, destDir *Dir) error {
 			}
 		}
 	default:
-		err = fmt.Errorf("unknown type %T", oldNode)
+		err = errors.Errorf("unknown type %T", oldNode)
 		fs.Errorf(d.path, "Dir.Rename error: %v", err)
 		return err
 	}
@@ -1039,7 +945,6 @@ func (d *Dir) Rename(oldName, newName string, destDir *Dir) error {
 	destDir.addObject(oldNode)
 
 	// fs.Debugf(newPath, "Dir.Rename renamed from %q", oldPath)
-	// fs.Debugf(d, "AFTER\n%s", d.dump())
 	return nil
 }
 

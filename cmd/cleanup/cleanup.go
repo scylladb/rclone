@@ -1,4 +1,3 @@
-// Package cleanup provides the cleanup command.
 package cleanup
 
 import (
@@ -20,9 +19,6 @@ var commandDefinition = &cobra.Command{
 Clean up the remote if possible.  Empty the trash or delete old file
 versions. Not supported by all remotes.
 `,
-	Annotations: map[string]string{
-		"versionIntroduced": "v1.31",
-	},
 	Run: func(command *cobra.Command, args []string) {
 		cmd.CheckArgs(1, 1, command, args)
 		fsrc := cmd.NewFsSrc(args)

@@ -1,5 +1,4 @@
-//go:build gofuzz
-// +build gofuzz
+//+build gofuzz
 
 package filename
 
@@ -26,9 +25,7 @@ func Fuzz(data []byte) int {
 		panic(fmt.Sprintf("error decoding %q, input %q: %v", enc, string(data), err))
 	}
 	if !bytes.Equal(data, []byte(decoded)) {
-		table := decodeMap[enc[0]]
-		table--
-		panic(fmt.Sprintf("decode mismatch, encoded: %q, org: %q, got: %q, table %d", enc, string(data), decoded, int(table)))
+		panic(fmt.Sprintf("decode mismatch, encoded: %q, org: %q, got: %q", enc, string(data), decoded))
 	}
 
 	// Everything is good.

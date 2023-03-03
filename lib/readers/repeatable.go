@@ -1,9 +1,10 @@
 package readers
 
 import (
-	"errors"
 	"io"
 	"sync"
+
+	"github.com/pkg/errors"
 )
 
 // A RepeatableReader implements the io.ReadSeeker it allow to seek cached data

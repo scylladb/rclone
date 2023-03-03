@@ -7,8 +7,7 @@
 //
 // Run with go generate (defined in vfs.go)
 //
-//go:build none
-// +build none
+//+build none
 
 // FIXME include read too?
 
@@ -17,6 +16,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"os"
 	"strings"
@@ -195,7 +195,7 @@ type openTest struct{
 // combination of flags.  This obeys Unix semantics even on Windows.
 var openTests = []openTest{
 `)
-	f, err := os.CreateTemp("", "open-test")
+	f, err := ioutil.TempFile("", "open-test")
 	if err != nil {
 		log.Fatal(err)
 	}

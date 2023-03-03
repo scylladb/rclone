@@ -1,6 +1,7 @@
 package vfstest
 
 import (
+	"io/ioutil"
 	"os"
 	"time"
 
@@ -87,24 +88,12 @@ func (r realOs) OpenFile(name string, flags int, perm os.FileMode) (vfs.Handle, 
 
 // ReadDir
 func (r realOs) ReadDir(dirname string) ([]os.FileInfo, error) {
-	entries, err := os.ReadDir(dirname)
-	if err != nil {
-		return nil, err
-	}
-	infos := make([]os.FileInfo, 0, len(entries))
-	for _, entry := range entries {
-		info, err := entry.Info()
-		if err != nil {
-			return nil, err
-		}
-		infos = append(infos, info)
-	}
-	return infos, nil
+	return ioutil.ReadDir(dirname)
 }
 
 // ReadFile
 func (r realOs) ReadFile(filename string) (b []byte, err error) {
-	return os.ReadFile(filename)
+	return ioutil.ReadFile(filename)
 }
 
 // Remove

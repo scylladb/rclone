@@ -3,15 +3,14 @@
 //
 // We skip tests on platforms with troublesome character mappings
 
-//go:build !windows && !darwin
-// +build !windows,!darwin
+//+build !windows,!darwin
 
 package webdav
 
 import (
 	"context"
 	"flag"
-	"io"
+	"io/ioutil"
 	"net/http"
 	"os"
 	"strings"
@@ -19,6 +18,7 @@ import (
 	"time"
 
 	_ "github.com/rclone/rclone/backend/local"
+	"github.com/rclone/rclone/cmd/serve/httplib"
 	"github.com/rclone/rclone/cmd/serve/servetest"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/config/configmap"
@@ -39,9 +39,9 @@ const (
 
 // check interfaces
 var (
-	_ os.FileInfo         = FileInfo{nil, nil}
-	_ webdav.ETager       = FileInfo{nil, nil}
-	_ webdav.ContentTyper = FileInfo{nil, nil}
+	_ os.FileInfo         = FileInfo{nil}
+	_ webdav.ETager       = FileInfo{nil}
+	_ webdav.ContentTyper = FileInfo{nil}
 )
 
 // TestWebDav runs the webdav server then runs the unit tests for the
@@ -49,30 +49,28 @@ var (
 func TestWebDav(t *testing.T) {
 	// Configure and start the server
 	start := func(f fs.Fs) (configmap.Simple, func()) {
-		opt := DefaultOpt
-		opt.HTTP.ListenAddr = []string{testBindAddress}
-		opt.HTTP.BaseURL = "/prefix"
-		opt.Auth.BasicUser = testUser
-		opt.Auth.BasicPass = testPass
-		opt.Template.Path = testTemplate
-		opt.HashType = hash.MD5
+		opt := httplib.DefaultOpt
+		opt.ListenAddr = testBindAddress
+		opt.BasicUser = testUser
+		opt.BasicPass = testPass
+		opt.Template = testTemplate
+		hashType = hash.MD5
 
 		// Start the server
-		w, err := newWebDAV(context.Background(), f, &opt)
-		require.NoError(t, err)
-		require.NoError(t, w.serve())
+		w := newWebDAV(context.Background(), f, &opt)
+		assert.NoError(t, w.serve())
 
 		// Config for the backend we'll use to connect to the server
 		config := configmap.Simple{
 			"type":   "webdav",
 			"vendor": "other",
-			"url":    w.Server.URLs()[0],
+			"url":    w.Server.URL(),
 			"user":   testUser,
 			"pass":   obscure.MustObscure(testPass),
 		}
 
 		return config, func() {
-			assert.NoError(t, w.Shutdown())
+			w.Close()
 			w.Wait()
 		}
 	}
@@ -99,19 +97,18 @@ func TestHTTPFunction(t *testing.T) {
 	f, err := fs.NewFs(context.Background(), "../http/testdata/files")
 	assert.NoError(t, err)
 
-	opt := DefaultOpt
-	opt.HTTP.ListenAddr = []string{testBindAddress}
-	opt.Template.Path = testTemplate
+	opt := httplib.DefaultOpt
+	opt.ListenAddr = testBindAddress
+	opt.Template = testTemplate
 
 	// Start the server
-	w, err := newWebDAV(context.Background(), f, &opt)
-	assert.NoError(t, err)
-	require.NoError(t, w.serve())
+	w := newWebDAV(context.Background(), f, &opt)
+	assert.NoError(t, w.serve())
 	defer func() {
-		assert.NoError(t, w.Shutdown())
+		w.Close()
 		w.Wait()
 	}()
-	testURL := w.Server.URLs()[0]
+	testURL := w.Server.URL()
 	pause := time.Millisecond
 	i := 0
 	for ; i < 10; i++ {
@@ -136,10 +133,10 @@ func TestHTTPFunction(t *testing.T) {
 func checkGolden(t *testing.T, fileName string, got []byte) {
 	if *updateGolden {
 		t.Logf("Updating golden file %q", fileName)
-		err := os.WriteFile(fileName, got, 0666)
+		err := ioutil.WriteFile(fileName, got, 0666)
 		require.NoError(t, err)
 	} else {
-		want, err := os.ReadFile(fileName)
+		want, err := ioutil.ReadFile(fileName)
 		require.NoError(t, err, "problem")
 		wants := strings.Split(string(want), "\n")
 		gots := strings.Split(string(got), "\n")
@@ -255,7 +252,7 @@ func HelpTestGET(t *testing.T, testURL string) {
 		resp, err := http.DefaultClient.Do(req)
 		require.NoError(t, err)
 		assert.Equal(t, test.Status, resp.StatusCode, test.Golden)
-		body, err := io.ReadAll(resp.Body)
+		body, err := ioutil.ReadAll(resp.Body)
 		require.NoError(t, err)
 
 		checkGolden(t, test.Golden, body)

@@ -1,4 +1,3 @@
-// Package policy provides utilities for the union implementation.
 package policy
 
 import (

@@ -1,5 +1,4 @@
-//go:build !js
-// +build !js
+//+build !js
 
 package terminal
 
@@ -7,13 +6,13 @@ import (
 	"fmt"
 	"os"
 
-	"golang.org/x/term"
+	"golang.org/x/crypto/ssh/terminal"
 )
 
 // GetSize reads the dimensions of the current terminal or returns a
 // sensible default
 func GetSize() (w, h int) {
-	w, h, err := term.GetSize(int(os.Stdout.Fd()))
+	w, h, err := terminal.GetSize(int(os.Stdout.Fd()))
 	if err != nil {
 		w, h = 80, 25
 	}
@@ -22,14 +21,14 @@ func GetSize() (w, h int) {
 
 // IsTerminal returns whether the fd passed in is a terminal or not
 func IsTerminal(fd int) bool {
-	return term.IsTerminal(fd)
+	return terminal.IsTerminal(fd)
 }
 
 // ReadPassword reads a line of input from a terminal without local echo. This
 // is commonly used for inputting passwords and other sensitive data. The slice
 // returned does not include the \n.
 func ReadPassword(fd int) ([]byte, error) {
-	return term.ReadPassword(fd)
+	return terminal.ReadPassword(fd)
 }
 
 // WriteTerminalTitle writes a string to the terminal title

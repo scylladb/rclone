@@ -1,6 +1,5 @@
 // Syslog interface for non-Unix variants only
 
-//go:build windows || nacl || plan9
 // +build windows nacl plan9
 
 package log

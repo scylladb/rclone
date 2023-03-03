@@ -28,8 +28,6 @@ func setup(t *testing.T) (*Cache, CreateFunc) {
 			return "/file.txt", true, errCached
 		case "/error":
 			return nil, false, errSentinel
-		case "/err":
-			return nil, false, errSentinel
 		}
 		panic(fmt.Sprintf("Unknown path %q", path))
 	}
@@ -100,7 +98,7 @@ func TestPut(t *testing.T) {
 func TestCacheExpire(t *testing.T) {
 	c, create := setup(t)
 
-	c.SetExpireInterval(time.Millisecond)
+	c.expireInterval = time.Millisecond
 	assert.Equal(t, false, c.expireRunning)
 
 	_, err := c.Get("/", create)
@@ -127,38 +125,13 @@ func TestCacheExpire(t *testing.T) {
 	c.mu.Unlock()
 }
 
-func TestCacheNoExpire(t *testing.T) {
-	c, create := setup(t)
-
-	assert.False(t, c.noCache())
-
-	c.SetExpireDuration(0)
-	assert.Equal(t, false, c.expireRunning)
-
-	assert.True(t, c.noCache())
-
-	f, err := c.Get("/", create)
-	require.NoError(t, err)
-	require.NotNil(t, f)
-
-	c.mu.Lock()
-	assert.Equal(t, 0, len(c.cache))
-	c.mu.Unlock()
-
-	c.Put("/alien", "slime")
-
-	c.mu.Lock()
-	assert.Equal(t, 0, len(c.cache))
-	c.mu.Unlock()
-}
-
 func TestCachePin(t *testing.T) {
 	c, create := setup(t)
 
 	_, err := c.Get("/", create)
 	require.NoError(t, err)
 
-	// Pin a nonexistent item to show nothing happens
+	// Pin a non existent item to show nothing happens
 	c.Pin("notfound")
 
 	c.mu.Lock()
@@ -252,53 +225,6 @@ func TestGetMaybe(t *testing.T) {
 	assert.Nil(t, value)
 }
 
-func TestDelete(t *testing.T) {
-	c, create := setup(t)
-
-	assert.Equal(t, 0, len(c.cache))
-
-	_, err := c.Get("/", create)
-	require.NoError(t, err)
-
-	assert.Equal(t, 1, len(c.cache))
-
-	assert.Equal(t, false, c.Delete("notfound"))
-	assert.Equal(t, 1, len(c.cache))
-
-	assert.Equal(t, true, c.Delete("/"))
-	assert.Equal(t, 0, len(c.cache))
-
-	assert.Equal(t, false, c.Delete("/"))
-	assert.Equal(t, 0, len(c.cache))
-}
-
-func TestDeletePrefix(t *testing.T) {
-	create := func(path string) (interface{}, bool, error) {
-		return path, true, nil
-	}
-	c := New()
-
-	_, err := c.Get("remote:path", create)
-	require.NoError(t, err)
-	_, err = c.Get("remote:path2", create)
-	require.NoError(t, err)
-	_, err = c.Get("remote:", create)
-	require.NoError(t, err)
-	_, err = c.Get("remote", create)
-	require.NoError(t, err)
-
-	assert.Equal(t, 4, len(c.cache))
-
-	assert.Equal(t, 3, c.DeletePrefix("remote:"))
-	assert.Equal(t, 1, len(c.cache))
-
-	assert.Equal(t, 1, c.DeletePrefix(""))
-	assert.Equal(t, 0, len(c.cache))
-
-	assert.Equal(t, 0, c.DeletePrefix(""))
-	assert.Equal(t, 0, len(c.cache))
-}
-
 func TestCacheRename(t *testing.T) {
 	c := New()
 	create := func(path string) (interface{}, bool, error) {
@@ -312,7 +238,7 @@ func TestCacheRename(t *testing.T) {
 
 	assert.Equal(t, 2, c.Entries())
 
-	// rename to nonexistent
+	// rename to non existent
 	value, found := c.Rename("existing1", "EXISTING1")
 	assert.Equal(t, true, found)
 	assert.Equal(t, existing1, value)
@@ -326,44 +252,10 @@ func TestCacheRename(t *testing.T) {
 
 	assert.Equal(t, 1, c.Entries())
 
-	// rename nonexistent
+	// rename non existent
 	value, found = c.Rename("notfound", "NOTFOUND")
 	assert.Equal(t, false, found)
 	assert.Nil(t, value)
 
 	assert.Equal(t, 1, c.Entries())
-}
-
-func TestCacheFinalize(t *testing.T) {
-	c := New()
-	numCalled := 0
-	c.SetFinalizer(func(v interface{}) {
-		numCalled++
-	})
-	create := func(path string) (interface{}, bool, error) {
-		return path, true, nil
-	}
-	_, _ = c.Get("ok", create)
-	assert.Equal(t, 0, numCalled)
-	c.Clear()
-	assert.Equal(t, 1, numCalled)
-
-	_, _ = c.Get("ok", create)
-	c.Delete("ok")
-	assert.Equal(t, 2, numCalled)
-
-	_, _ = c.Get("ok", create)
-	c.DeletePrefix("ok")
-	assert.Equal(t, 3, numCalled)
-
-	_, _ = c.Get("old", create)
-	_, _ = c.Get("new", create)
-	c.Rename("old", "new")
-	assert.Equal(t, 4, numCalled)
-
-	c.expireDuration = 1 * time.Millisecond
-	_, _ = c.Get("ok", create)
-	time.Sleep(2 * time.Millisecond)
-	c.cacheExpire() // "ok" and "new" fall out of cache
-	assert.Equal(t, 6, numCalled)
 }

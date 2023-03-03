@@ -3,7 +3,8 @@ title: "FAQ"
 description: "Rclone Frequently Asked Questions"
 ---
 
-# Frequently Asked Questions
+Frequently Asked Questions
+--------------------------
 
 ### Do all cloud storage systems support all rclone commands ###
 
@@ -31,9 +32,9 @@ the node running rclone would need to have lots of bandwidth.
 
 The syncs would be incremental (on a file by file basis).
 
-e.g.
+Eg
 
-    rclone sync --interactive drive:Folder s3:bucket
+    rclone sync -i drive:Folder s3:bucket
 
 
 ### Using rclone from multiple locations at the same time ###
@@ -42,8 +43,8 @@ You can use rclone from multiple places at the same time if you choose
 different subdirectory for the output, e.g.
 
 ```
-Server A> rclone sync --interactive /tmp/whatever remote:ServerA
-Server B> rclone sync --interactive /tmp/whatever remote:ServerB
+Server A> rclone sync -i /tmp/whatever remote:ServerA
+Server B> rclone sync -i /tmp/whatever remote:ServerB
 ```
 
 If you sync to the same directory then you should use rclone copy
@@ -82,8 +83,9 @@ of metadata, which breaks the desired 1:1 mapping of files to objects.
 
 ### Can rclone do bi-directional sync? ###
 
-Yes, since rclone v1.58.0, [bidirectional cloud sync](/bisync/) is
-available.
+No, not at present.  rclone only does uni-directional sync from A ->
+B. It may do in the future though since it has all the primitives - it
+just requires writing the algorithm to do it.
 
 ### Can I use rclone with an HTTP proxy? ###
 
@@ -108,14 +110,6 @@ possibilities.  So, on Linux, you may end up with code similar to
     export HTTP_PROXY=$http_proxy
     export HTTPS_PROXY=$http_proxy
 
-
-Note: If the proxy server requires a username and password, then use
-
-    export http_proxy=http://username:password@proxyserver:12345
-    export https_proxy=$http_proxy
-    export HTTP_PROXY=$http_proxy
-    export HTTPS_PROXY=$http_proxy
-
 The `NO_PROXY` allows you to disable the proxy for specific hosts.
 Hosts must be comma separated, and can contain domains or parts.
 For instance "foo.com" also matches "bar.foo.com".
@@ -125,11 +119,11 @@ e.g.
     export no_proxy=localhost,127.0.0.0/8,my.host.name
     export NO_PROXY=$no_proxy
 
-Note that the FTP backend does not support `ftp_proxy` yet.
+Note that the ftp backend does not support `ftp_proxy` yet.
 
 ### Rclone gives x509: failed to load system roots and no roots provided error ###
 
-This means that `rclone` can't find the SSL root certificates.  Likely
+This means that `rclone` can't file the SSL root certificates.  Likely
 you are running `rclone` on a NAS with a cut-down Linux OS, or
 possibly on Solaris.
 
@@ -197,7 +191,7 @@ issues with DNS resolution. See the [name resolution section in the go docs](htt
 ### The total size reported in the stats for a sync is wrong and keeps changing
 
 It is likely you have more than 10,000 files that need to be
-synced. By default, rclone only gets 10,000 files ahead in a sync so as
+synced. By default rclone only gets 10,000 files ahead in a sync so as
 not to use up too much memory. You can change this default with the
 [--max-backlog](/docs/#max-backlog-n) flag.
 
@@ -216,21 +210,3 @@ The most common cause of rclone using lots of memory is a single
 directory with thousands or millions of files in.  Rclone has to load
 this entirely into memory as rclone objects.  Each rclone object takes
 0.5k-1k of memory.
-
-### Rclone changes fullwidth Unicode punctuation marks in file names
-
-For example: On a Windows system, you have a file with name `Test：1.jpg`,
-where `：` is the Unicode fullwidth colon symbol. When using rclone
-to copy this to your Google Drive, you will notice that the file
-gets renamed to `Test:1.jpg`, where `:` is the regular (halfwidth) colon.
-
-The reason for such renames is the way rclone handles different
-[restricted filenames](/overview/#restricted-filenames) on different
-cloud storage systems. It tries to avoid ambiguous file names as
-much and allow moving files between many cloud storage systems
-transparently, by replacing invalid characters with similar looking
-Unicode characters when transferring to one storage system, and replacing
-back again when transferring to a different storage system where the
-original characters are supported. When the same Unicode characters
-are intentionally used in file names, this replacement strategy leads
-to unwanted renames. Read more [here](/overview/#restricted-filenames-caveats).

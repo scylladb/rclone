@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 	"regexp"
-	"sort"
 	"strings"
 
 	"github.com/rclone/rclone/fs"
@@ -17,8 +16,6 @@ import (
 	"github.com/rclone/rclone/lib/atexit"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
-	"golang.org/x/text/cases"
-	"golang.org/x/text/language"
 )
 
 // Root is the main rclone command
@@ -168,7 +165,7 @@ func runRoot(cmd *cobra.Command, args []string) {
 // setupRootCommand sets default usage, help, and error handling for
 // the root command.
 //
-// Helpful example: https://github.com/moby/moby/blob/master/cli/cobra.go
+// Helpful example: http://rtfcode.com/xref/moby-17.03.2-ce/cli/cobra.go
 func setupRootCommand(rootCmd *cobra.Command) {
 	ci := fs.GetConfig(context.Background())
 	// Add global flags
@@ -318,8 +315,7 @@ func showBackend(name string) {
 			optionsType = "advanced"
 			continue
 		}
-		optionsType = cases.Title(language.Und, cases.NoLower).String(optionsType)
-		fmt.Printf("### %s options\n\n", optionsType)
+		fmt.Printf("### %s Options\n\n", strings.Title(optionsType))
 		fmt.Printf("Here are the %s options specific to %s (%s).\n\n", optionsType, backend.Name, backend.Description)
 		optionsType = "advanced"
 		for _, opt := range opts {
@@ -333,29 +329,12 @@ func showBackend(name string) {
 			if opt.IsPassword {
 				fmt.Printf("**NB** Input to this must be obscured - see [rclone obscure](/commands/rclone_obscure/).\n\n")
 			}
-			fmt.Printf("Properties:\n\n")
 			fmt.Printf("- Config:      %s\n", opt.Name)
 			fmt.Printf("- Env Var:     %s\n", opt.EnvVarName(backend.Prefix))
-			if opt.Provider != "" {
-				fmt.Printf("- Provider:    %s\n", opt.Provider)
-			}
 			fmt.Printf("- Type:        %s\n", opt.Type())
-			defaultValue := opt.GetValue()
-			// Default value and Required are related: Required means option must
-			// have a value, but if there is a default then a value does not have
-			// to be explicitly set and then Required makes no difference.
-			if defaultValue != "" {
-				fmt.Printf("- Default:     %s\n", quoteString(defaultValue))
-			} else {
-				fmt.Printf("- Required:    %v\n", opt.Required)
-			}
-			// List examples / possible choices
+			fmt.Printf("- Default:     %s\n", quoteString(opt.GetValue()))
 			if len(opt.Examples) > 0 {
-				if opt.Exclusive {
-					fmt.Printf("- Choices:\n")
-				} else {
-					fmt.Printf("- Examples:\n")
-				}
+				fmt.Printf("- Examples:\n")
 				for _, ex := range opt.Examples {
 					fmt.Printf("    - %s\n", quoteString(ex.Value))
 					for _, line := range strings.Split(ex.Help, "\n") {
@@ -365,29 +344,5 @@ func showBackend(name string) {
 			}
 			fmt.Printf("\n")
 		}
-	}
-	if backend.MetadataInfo != nil {
-		fmt.Printf("### Metadata\n\n")
-		fmt.Printf("%s\n\n", strings.TrimSpace(backend.MetadataInfo.Help))
-		if len(backend.MetadataInfo.System) > 0 {
-			fmt.Printf("Here are the possible system metadata items for the %s backend.\n\n", backend.Name)
-			keys := []string{}
-			for k := range backend.MetadataInfo.System {
-				keys = append(keys, k)
-			}
-			sort.Strings(keys)
-			fmt.Printf("| Name | Help | Type | Example | Read Only |\n")
-			fmt.Printf("|------|------|------|---------|-----------|\n")
-			for _, k := range keys {
-				v := backend.MetadataInfo.System[k]
-				ro := "N"
-				if v.ReadOnly {
-					ro = "**Y**"
-				}
-				fmt.Printf("| %s | %s | %s | %s | %s |\n", k, v.Help, v.Type, v.Example, ro)
-			}
-			fmt.Printf("\n")
-		}
-		fmt.Printf("See the [metadata](/docs/#metadata) docs for more info.\n\n")
 	}
 }

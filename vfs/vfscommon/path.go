@@ -5,11 +5,11 @@ import (
 	"path/filepath"
 )
 
-// OSFindParent returns the parent directory of name, or "" for the
+// OsFindParent returns the parent directory of name, or "" for the
 // root for OS native paths.
-func OSFindParent(name string) string {
+func OsFindParent(name string) string {
 	parent := filepath.Dir(name)
-	if parent == "." || (len(parent) == 1 && parent[0] == filepath.Separator) {
+	if parent == "." || parent == "/" {
 		parent = ""
 	}
 	return parent

@@ -2,12 +2,13 @@ package webgui
 
 import (
 	"context"
+	"io/ioutil"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/rclone/rclone/fs/rc"
-	"github.com/rclone/rclone/fs/rc/rcflags"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -17,18 +18,20 @@ const testPluginAuthor = "rclone"
 const testPluginKey = testPluginAuthor + "/" + testPluginName
 const testPluginURL = "https://github.com/" + testPluginAuthor + "/" + testPluginName + "/"
 
-func init() {
-	rcflags.Opt.WebUI = true
-}
-
-func setCacheDir(t *testing.T) {
-	cacheDir := t.TempDir()
+func setCacheDir(t *testing.T) string {
+	cacheDir, err := ioutil.TempDir("", "rclone-cache-dir")
+	assert.Nil(t, err)
 	PluginsPath = filepath.Join(cacheDir, "plugins")
 	pluginsConfigPath = filepath.Join(cacheDir, "config")
 
 	loadedPlugins = newPlugins(availablePluginsJSONPath)
-	err := loadedPlugins.readFromFile()
+	err = loadedPlugins.readFromFile()
 	assert.Nil(t, err)
+	return cacheDir
+}
+
+func cleanCacheDir(t *testing.T, cacheDir string) {
+	_ = os.RemoveAll(cacheDir)
 }
 
 func addPlugin(t *testing.T) {
@@ -82,7 +85,8 @@ func removePlugin(t *testing.T) {
 //}
 
 func TestAddPlugin(t *testing.T) {
-	setCacheDir(t)
+	cacheDir := setCacheDir(t)
+	defer cleanCacheDir(t, cacheDir)
 
 	addPlugin(t)
 	_, ok := loadedPlugins.LoadedPlugins[testPluginKey]
@@ -94,7 +98,8 @@ func TestAddPlugin(t *testing.T) {
 }
 
 func TestListPlugins(t *testing.T) {
-	setCacheDir(t)
+	cacheDir := setCacheDir(t)
+	defer cleanCacheDir(t, cacheDir)
 
 	addPlugin := rc.Calls.Get("pluginsctl/listPlugins")
 	assert.NotNil(t, addPlugin)
@@ -109,7 +114,8 @@ func TestListPlugins(t *testing.T) {
 }
 
 func TestRemovePlugin(t *testing.T) {
-	setCacheDir(t)
+	cacheDir := setCacheDir(t)
+	defer cleanCacheDir(t, cacheDir)
 
 	addPlugin(t)
 	removePluginCall := rc.Calls.Get("pluginsctl/removePlugin")

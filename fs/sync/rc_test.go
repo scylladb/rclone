@@ -26,14 +26,15 @@ func rcNewRun(t *testing.T, method string) (*fstest.Run, *rc.Call) {
 // sync/copy: copy a directory from source remote to destination remote
 func TestRcCopy(t *testing.T) {
 	r, call := rcNewRun(t, "sync/copy")
+	defer r.Finalise()
 	r.Mkdir(context.Background(), r.Fremote)
 
 	file1 := r.WriteBoth(context.Background(), "file1", "file1 contents", t1)
 	file2 := r.WriteFile("subdir/file2", "file2 contents", t2)
 	file3 := r.WriteObject(context.Background(), "subdir/subsubdir/file3", "file3 contents", t3)
 
-	r.CheckLocalItems(t, file1, file2)
-	r.CheckRemoteItems(t, file1, file3)
+	fstest.CheckItems(t, r.Flocal, file1, file2)
+	fstest.CheckItems(t, r.Fremote, file1, file3)
 
 	in := rc.Params{
 		"srcFs": r.LocalName,
@@ -43,21 +44,22 @@ func TestRcCopy(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, rc.Params(nil), out)
 
-	r.CheckLocalItems(t, file1, file2)
-	r.CheckRemoteItems(t, file1, file2, file3)
+	fstest.CheckItems(t, r.Flocal, file1, file2)
+	fstest.CheckItems(t, r.Fremote, file1, file2, file3)
 }
 
 // sync/move: move a directory from source remote to destination remote
 func TestRcMove(t *testing.T) {
 	r, call := rcNewRun(t, "sync/move")
+	defer r.Finalise()
 	r.Mkdir(context.Background(), r.Fremote)
 
 	file1 := r.WriteBoth(context.Background(), "file1", "file1 contents", t1)
 	file2 := r.WriteFile("subdir/file2", "file2 contents", t2)
 	file3 := r.WriteObject(context.Background(), "subdir/subsubdir/file3", "file3 contents", t3)
 
-	r.CheckLocalItems(t, file1, file2)
-	r.CheckRemoteItems(t, file1, file3)
+	fstest.CheckItems(t, r.Flocal, file1, file2)
+	fstest.CheckItems(t, r.Fremote, file1, file3)
 
 	in := rc.Params{
 		"srcFs": r.LocalName,
@@ -67,21 +69,22 @@ func TestRcMove(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, rc.Params(nil), out)
 
-	r.CheckLocalItems(t)
-	r.CheckRemoteItems(t, file1, file2, file3)
+	fstest.CheckItems(t, r.Flocal)
+	fstest.CheckItems(t, r.Fremote, file1, file2, file3)
 }
 
 // sync/sync: sync a directory from source remote to destination remote
 func TestRcSync(t *testing.T) {
 	r, call := rcNewRun(t, "sync/sync")
+	defer r.Finalise()
 	r.Mkdir(context.Background(), r.Fremote)
 
 	file1 := r.WriteBoth(context.Background(), "file1", "file1 contents", t1)
 	file2 := r.WriteFile("subdir/file2", "file2 contents", t2)
 	file3 := r.WriteObject(context.Background(), "subdir/subsubdir/file3", "file3 contents", t3)
 
-	r.CheckLocalItems(t, file1, file2)
-	r.CheckRemoteItems(t, file1, file3)
+	fstest.CheckItems(t, r.Flocal, file1, file2)
+	fstest.CheckItems(t, r.Fremote, file1, file3)
 
 	in := rc.Params{
 		"srcFs": r.LocalName,
@@ -91,6 +94,6 @@ func TestRcSync(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, rc.Params(nil), out)
 
-	r.CheckLocalItems(t, file1, file2)
-	r.CheckRemoteItems(t, file1, file2)
+	fstest.CheckItems(t, r.Flocal, file1, file2)
+	fstest.CheckItems(t, r.Fremote, file1, file2)
 }

@@ -3,14 +3,13 @@ package walk
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"path"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/dirtree"
 	"github.com/rclone/rclone/fs/filter"
@@ -50,7 +49,7 @@ type Func func(path string, entries fs.DirEntries, err error) error
 // Note that fn will not be called concurrently whereas the directory
 // listing will proceed concurrently.
 //
-// Parent directories are always listed before their children.
+// Parent directories are always listed before their children
 //
 // This is implemented by WalkR if Config.UseListR is true
 // and f supports it and level > 1, or WalkN otherwise.
@@ -58,13 +57,10 @@ type Func func(path string, entries fs.DirEntries, err error) error
 // If --files-from and --no-traverse is set then a DirTree will be
 // constructed with just those files in and then walked with WalkR
 //
-// Note: this will flag filter-aware backends!
-//
 // NB (f, path) to be replaced by fs.Dir at some point
 func Walk(ctx context.Context, f fs.Fs, path string, includeAll bool, maxLevel int, fn Func) error {
 	ci := fs.GetConfig(ctx)
 	fi := filter.GetConfig(ctx)
-	ctx = filter.SetUseFilter(ctx, f.Features().FilterAware && !includeAll) // make filter-aware backends constrain List
 	if ci.NoTraverse && fi.HaveFilesFrom() {
 		return walkR(ctx, f, path, includeAll, maxLevel, fn, fi.MakeListR(ctx, f.NewObject))
 	}
@@ -125,7 +121,7 @@ func (l ListType) Filter(in *fs.DirEntries) {
 // If maxLevel is < 0 then it will recurse indefinitely, else it will
 // only do maxLevel levels.
 //
-// If synthesizeDirs is set then for bucket-based remotes it will
+// If synthesizeDirs is set then for bucket based remotes it will
 // synthesize directories from the file structure.  This uses extra
 // memory so don't set this if you don't need directories, likewise do
 // set this if you are interested in directories.
@@ -142,8 +138,6 @@ func (l ListType) Filter(in *fs.DirEntries) {
 // This is implemented by using ListR on the backend if possible and
 // efficient, otherwise by Walk.
 //
-// Note: this will flag filter-aware backends
-//
 // NB (f, path) to be replaced by fs.Dir at some point
 func ListR(ctx context.Context, f fs.Fs, path string, includeAll bool, maxLevel int, listType ListType, fn fs.ListRCallback) error {
 	fi := filter.GetConfig(ctx)
@@ -158,12 +152,10 @@ func ListR(ctx context.Context, f fs.Fs, path string, includeAll bool, maxLevel 
 		fi.UsesDirectoryFilters() { // ...using any directory filters
 		return listRwalk(ctx, f, path, includeAll, maxLevel, listType, fn)
 	}
-	ctx = filter.SetUseFilter(ctx, f.Features().FilterAware && !includeAll) // make filter-aware backends constrain List
 	return listR(ctx, f, path, includeAll, listType, fn, doListR, listType.Dirs() && f.Features().BucketBased)
 }
 
 // listRwalk walks the file tree for ListR using Walk
-// Note: this will flag filter-aware backends (via Walk)
 func listRwalk(ctx context.Context, f fs.Fs, path string, includeAll bool, maxLevel int, listType ListType, fn fs.ListRCallback) error {
 	var listErr error
 	walkErr := Walk(ctx, f, path, includeAll, maxLevel, func(path string, entries fs.DirEntries, err error) error {
@@ -183,7 +175,7 @@ func listRwalk(ctx context.Context, f fs.Fs, path string, includeAll bool, maxLe
 	return walkErr
 }
 
-// dirMap keeps track of directories made for bucket-based remotes.
+// dirMap keeps track of directories made for bucket based remotes.
 // true => directory has been sent
 // false => directory has been seen but not sent
 type dirMap struct {
@@ -245,7 +237,7 @@ func (dm *dirMap) addEntries(entries fs.DirEntries) error {
 		case fs.Directory:
 			dm.add(x.Remote(), true)
 		default:
-			return fmt.Errorf("unknown object type %T", entry)
+			return errors.Errorf("unknown object type %T", entry)
 		}
 	}
 	return nil
@@ -316,7 +308,7 @@ func listR(ctx context.Context, f fs.Fs, path string, includeAll bool, listType 
 						return err
 					}
 				default:
-					return fmt.Errorf("unknown object type %T", entry)
+					return errors.Errorf("unknown object type %T", entry)
 				}
 				if include {
 					filteredEntries = append(filteredEntries, entry)
@@ -471,48 +463,30 @@ func walkRDirTree(ctx context.Context, f fs.Fs, startPath string, includeAll boo
 		defer mu.Unlock()
 		for _, entry := range entries {
 			slashes := strings.Count(entry.Remote(), "/")
-			excluded := true
 			switch x := entry.(type) {
 			case fs.Object:
 				// Make sure we don't delete excluded files if not required
 				if includeAll || fi.IncludeObject(ctx, x) {
 					if maxLevel < 0 || slashes <= maxLevel-1 {
 						dirs.Add(x)
-						excluded = false
+					} else {
+						// Make sure we include any parent directories of excluded objects
+						dirPath := x.Remote()
+						for ; slashes > maxLevel-1; slashes-- {
+							dirPath = parentDir(dirPath)
+						}
+						dirs.CheckParent(startPath, dirPath)
 					}
 				} else {
 					fs.Debugf(x, "Excluded from sync (and deletion)")
 				}
-				// Make sure we include any parent directories of excluded objects
-				if excluded {
-					dirPath := parentDir(x.Remote())
-					slashes--
-					if maxLevel >= 0 {
-						for ; slashes > maxLevel-1; slashes-- {
-							dirPath = parentDir(dirPath)
-						}
-					}
-					inc, err := includeDirectory(dirPath)
-					if err != nil {
-						return err
-					}
-					if inc || includeAll {
-						// If the directory doesn't exist already, create it
-						_, obj := dirs.Find(dirPath)
-						if obj == nil {
-							dirs.AddDir(fs.NewDir(dirPath, time.Now()))
-						}
-					}
-				}
 				// Check if we need to prune a directory later.
 				if !includeAll && len(fi.Opt.ExcludeFile) > 0 {
 					basename := path.Base(x.Remote())
-					for _, excludeFile := range fi.Opt.ExcludeFile {
-						if basename == excludeFile {
-							excludeDir := parentDir(x.Remote())
-							toPrune[excludeDir] = true
-							fs.Debugf(basename, "Excluded from sync (and deletion) based on exclude file")
-						}
+					if basename == fi.Opt.ExcludeFile {
+						excludeDir := parentDir(x.Remote())
+						toPrune[excludeDir] = true
+						fs.Debugf(basename, "Excluded from sync (and deletion) based on exclude file")
 					}
 				}
 			case fs.Directory:
@@ -533,7 +507,7 @@ func walkRDirTree(ctx context.Context, f fs.Fs, startPath string, includeAll boo
 					fs.Debugf(x, "Excluded from sync (and deletion)")
 				}
 			default:
-				return fmt.Errorf("unknown object type %T", entry)
+				return errors.Errorf("unknown object type %T", entry)
 			}
 		}
 		return nil

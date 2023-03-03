@@ -2,13 +2,14 @@ package vfs
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/operations"
 	"github.com/rclone/rclone/fstest"
@@ -29,15 +30,15 @@ var (
 )
 
 // Create a file and open it with the flags passed in
-func rwHandleCreateFlags(t *testing.T, create bool, filename string, flags int) (r *fstest.Run, vfs *VFS, fh *RWFileHandle) {
+func rwHandleCreateFlags(t *testing.T, create bool, filename string, flags int) (r *fstest.Run, vfs *VFS, fh *RWFileHandle, cleanup func()) {
 	opt := vfscommon.DefaultOpt
 	opt.CacheMode = vfscommon.CacheModeFull
 	opt.WriteBack = writeBackDelay
-	r, vfs = newTestVFSOpt(t, &opt)
+	r, vfs, cleanup = newTestVFSOpt(t, &opt)
 
 	if create {
 		file1 := r.WriteObject(context.Background(), filename, "0123456789abcdef", t1)
-		r.CheckRemoteItems(t, file1)
+		fstest.CheckItems(t, r.Fremote, file1)
 	}
 
 	h, err := vfs.OpenFile(filename, flags, 0777)
@@ -45,16 +46,16 @@ func rwHandleCreateFlags(t *testing.T, create bool, filename string, flags int) 
 	fh, ok := h.(*RWFileHandle)
 	require.True(t, ok)
 
-	return r, vfs, fh
+	return r, vfs, fh, cleanup
 }
 
 // Open a file for read
-func rwHandleCreateReadOnly(t *testing.T) (r *fstest.Run, vfs *VFS, fh *RWFileHandle) {
+func rwHandleCreateReadOnly(t *testing.T) (r *fstest.Run, vfs *VFS, fh *RWFileHandle, cleanup func()) {
 	return rwHandleCreateFlags(t, true, "dir/file1", os.O_RDONLY)
 }
 
 // Open a file for write
-func rwHandleCreateWriteOnly(t *testing.T) (r *fstest.Run, vfs *VFS, fh *RWFileHandle) {
+func rwHandleCreateWriteOnly(t *testing.T) (r *fstest.Run, vfs *VFS, fh *RWFileHandle, cleanup func()) {
 	return rwHandleCreateFlags(t, false, "file1", os.O_WRONLY|os.O_CREATE)
 }
 
@@ -69,7 +70,8 @@ func rwReadString(t *testing.T, fh *RWFileHandle, n int) string {
 }
 
 func TestRWFileHandleMethodsRead(t *testing.T) {
-	_, _, fh := rwHandleCreateReadOnly(t)
+	_, _, fh, cleanup := rwHandleCreateReadOnly(t)
+	defer cleanup()
 
 	// String
 	assert.Equal(t, "dir/file1 (rw)", fh.String())
@@ -115,7 +117,8 @@ func TestRWFileHandleMethodsRead(t *testing.T) {
 }
 
 func TestRWFileHandleSeek(t *testing.T) {
-	_, _, fh := rwHandleCreateReadOnly(t)
+	_, _, fh, cleanup := rwHandleCreateReadOnly(t)
+	defer cleanup()
 
 	assert.Equal(t, fh.opened, false)
 
@@ -164,7 +167,8 @@ func TestRWFileHandleSeek(t *testing.T) {
 }
 
 func TestRWFileHandleReadAt(t *testing.T) {
-	_, _, fh := rwHandleCreateReadOnly(t)
+	_, _, fh, cleanup := rwHandleCreateReadOnly(t)
+	defer cleanup()
 
 	// read from start
 	buf := make([]byte, 1)
@@ -213,7 +217,8 @@ func TestRWFileHandleReadAt(t *testing.T) {
 }
 
 func TestRWFileHandleFlushRead(t *testing.T) {
-	_, _, fh := rwHandleCreateReadOnly(t)
+	_, _, fh, cleanup := rwHandleCreateReadOnly(t)
+	defer cleanup()
 
 	// Check Flush does nothing if read not called
 	err := fh.Flush()
@@ -241,7 +246,8 @@ func TestRWFileHandleFlushRead(t *testing.T) {
 }
 
 func TestRWFileHandleReleaseRead(t *testing.T) {
-	_, _, fh := rwHandleCreateReadOnly(t)
+	_, _, fh, cleanup := rwHandleCreateReadOnly(t)
+	defer cleanup()
 
 	// Read data
 	buf := make([]byte, 256)
@@ -263,7 +269,8 @@ func TestRWFileHandleReleaseRead(t *testing.T) {
 /// ------------------------------------------------------------
 
 func TestRWFileHandleMethodsWrite(t *testing.T) {
-	r, vfs, fh := rwHandleCreateWriteOnly(t)
+	r, vfs, fh, cleanup := rwHandleCreateWriteOnly(t)
+	defer cleanup()
 
 	// String
 	assert.Equal(t, "file1 (rw)", fh.String())
@@ -338,7 +345,8 @@ func TestRWFileHandleMethodsWrite(t *testing.T) {
 }
 
 func TestRWFileHandleWriteAt(t *testing.T) {
-	r, vfs, fh := rwHandleCreateWriteOnly(t)
+	r, vfs, fh, cleanup := rwHandleCreateWriteOnly(t)
+	defer cleanup()
 
 	offset := func() int64 {
 		n, err := fh.Seek(0, io.SeekCurrent)
@@ -385,11 +393,12 @@ func TestRWFileHandleWriteAt(t *testing.T) {
 }
 
 func TestRWFileHandleWriteNoWrite(t *testing.T) {
-	r, vfs, fh := rwHandleCreateWriteOnly(t)
+	r, vfs, fh, cleanup := rwHandleCreateWriteOnly(t)
+	defer cleanup()
 
 	// Close the file without writing to it
 	err := fh.Close()
-	if errors.Is(err, fs.ErrorCantUploadEmptyFiles) {
+	if errors.Cause(err) == fs.ErrorCantUploadEmptyFiles {
 		t.Logf("skipping test: %v", err)
 		return
 	}
@@ -418,7 +427,8 @@ func TestRWFileHandleWriteNoWrite(t *testing.T) {
 }
 
 func TestRWFileHandleFlushWrite(t *testing.T) {
-	_, _, fh := rwHandleCreateWriteOnly(t)
+	_, _, fh, cleanup := rwHandleCreateWriteOnly(t)
+	defer cleanup()
 
 	// Check that the file has been create and is open
 	assert.True(t, fh.opened)
@@ -446,7 +456,8 @@ func TestRWFileHandleFlushWrite(t *testing.T) {
 }
 
 func TestRWFileHandleReleaseWrite(t *testing.T) {
-	_, _, fh := rwHandleCreateWriteOnly(t)
+	_, _, fh, cleanup := rwHandleCreateWriteOnly(t)
+	defer cleanup()
 
 	// Write some data
 	n, err := fh.Write([]byte("hello"))
@@ -475,7 +486,8 @@ func assertSize(t *testing.T, vfs *VFS, fh *RWFileHandle, filepath string, size 
 }
 
 func TestRWFileHandleSizeTruncateExisting(t *testing.T) {
-	_, vfs, fh := rwHandleCreateFlags(t, true, "dir/file1", os.O_WRONLY|os.O_TRUNC)
+	_, vfs, fh, cleanup := rwHandleCreateFlags(t, true, "dir/file1", os.O_WRONLY|os.O_TRUNC)
+	defer cleanup()
 
 	// check initial size after opening
 	assertSize(t, vfs, fh, "dir/file1", 0)
@@ -496,7 +508,8 @@ func TestRWFileHandleSizeTruncateExisting(t *testing.T) {
 }
 
 func TestRWFileHandleSizeCreateExisting(t *testing.T) {
-	_, vfs, fh := rwHandleCreateFlags(t, true, "dir/file1", os.O_WRONLY|os.O_CREATE)
+	_, vfs, fh, cleanup := rwHandleCreateFlags(t, true, "dir/file1", os.O_WRONLY|os.O_CREATE)
+	defer cleanup()
 
 	// check initial size after opening
 	assertSize(t, vfs, fh, "dir/file1", 16)
@@ -525,7 +538,8 @@ func TestRWFileHandleSizeCreateExisting(t *testing.T) {
 }
 
 func TestRWFileHandleSizeCreateNew(t *testing.T) {
-	_, vfs, fh := rwHandleCreateFlags(t, false, "file1", os.O_WRONLY|os.O_CREATE)
+	_, vfs, fh, cleanup := rwHandleCreateFlags(t, false, "file1", os.O_WRONLY|os.O_CREATE)
+	defer cleanup()
 
 	// check initial size after opening
 	assertSize(t, vfs, fh, "file1", 0)
@@ -606,7 +620,7 @@ func testRWFileHandleOpenTest(t *testing.T, vfs *VFS, test *openTest) {
 	// read the file
 	f, err = vfs.OpenFile(fileName, os.O_RDONLY, 0)
 	require.NoError(t, err)
-	buf, err := io.ReadAll(f)
+	buf, err := ioutil.ReadAll(f)
 	require.NoError(t, err)
 	err = f.Close()
 	require.NoError(t, err)
@@ -629,25 +643,23 @@ func testRWFileHandleOpenTest(t *testing.T, vfs *VFS, test *openTest) {
 }
 
 func TestRWFileHandleOpenTests(t *testing.T) {
-	for _, cacheMode := range []vfscommon.CacheMode{vfscommon.CacheModeWrites, vfscommon.CacheModeFull} {
-		t.Run(cacheMode.String(), func(t *testing.T) {
-			opt := vfscommon.DefaultOpt
-			opt.CacheMode = cacheMode
-			opt.WriteBack = writeBackDelay
-			_, vfs := newTestVFSOpt(t, &opt)
+	opt := vfscommon.DefaultOpt
+	opt.CacheMode = vfscommon.CacheModeFull
+	opt.WriteBack = writeBackDelay
+	_, vfs, cleanup := newTestVFSOpt(t, &opt)
+	defer cleanup()
 
-			for _, test := range openTests {
-				t.Run(test.what, func(t *testing.T) {
-					testRWFileHandleOpenTest(t, vfs, &test)
-				})
-			}
+	for _, test := range openTests {
+		t.Run(test.what, func(t *testing.T) {
+			testRWFileHandleOpenTest(t, vfs, &test)
 		})
 	}
 }
 
 // tests mod time on open files
 func TestRWFileModTimeWithOpenWriters(t *testing.T) {
-	r, vfs, fh := rwHandleCreateWriteOnly(t)
+	r, vfs, fh, cleanup := rwHandleCreateWriteOnly(t)
+	defer cleanup()
 	if !canSetModTime(t, r) {
 		t.Skip("can't set mod time")
 	}
@@ -678,14 +690,15 @@ func TestRWFileModTimeWithOpenWriters(t *testing.T) {
 
 	file1 := fstest.NewItem("file1", "hi", mtime)
 	vfs.WaitForWriters(waitForWritersDelay)
-	r.CheckRemoteItems(t, file1)
+	fstest.CheckItems(t, r.Fremote, file1)
 }
 
 func TestRWCacheRename(t *testing.T) {
 	opt := vfscommon.DefaultOpt
 	opt.CacheMode = vfscommon.CacheModeFull
 	opt.WriteBack = writeBackDelay
-	r, vfs := newTestVFSOpt(t, &opt)
+	r, vfs, cleanup := newTestVFSOpt(t, &opt)
+	defer cleanup()
 
 	if !operations.CanServerSideMove(r.Fremote) {
 		t.Skip("skip as can't rename files")

@@ -9,22 +9,20 @@ import (
 
 // cache implements a simple object cache
 type cache struct {
-	mu           sync.RWMutex         // protects the cache
-	items        map[string]fs.Object // cache of objects
-	cacheObjects bool                 // whether we are actually caching
+	mu    sync.RWMutex         // protects the cache
+	items map[string]fs.Object // cache of objects
 }
 
 // create a new cache
-func newCache(cacheObjects bool) *cache {
+func newCache() *cache {
 	return &cache{
-		items:        map[string]fs.Object{},
-		cacheObjects: cacheObjects,
+		items: map[string]fs.Object{},
 	}
 }
 
 // find the object at remote or return nil
 func (c *cache) find(remote string) fs.Object {
-	if !c.cacheObjects {
+	if !cacheObjects {
 		return nil
 	}
 	c.mu.RLock()
@@ -35,7 +33,7 @@ func (c *cache) find(remote string) fs.Object {
 
 // add the object to the cache
 func (c *cache) add(remote string, o fs.Object) {
-	if !c.cacheObjects {
+	if !cacheObjects {
 		return
 	}
 	c.mu.Lock()
@@ -45,7 +43,7 @@ func (c *cache) add(remote string, o fs.Object) {
 
 // remove the object from the cache
 func (c *cache) remove(remote string) {
-	if !c.cacheObjects {
+	if !cacheObjects {
 		return
 	}
 	c.mu.Lock()
@@ -55,7 +53,7 @@ func (c *cache) remove(remote string) {
 
 // remove all the items with prefix from the cache
 func (c *cache) removePrefix(prefix string) {
-	if !c.cacheObjects {
+	if !cacheObjects {
 		return
 	}
 

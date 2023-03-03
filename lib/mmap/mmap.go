@@ -1,4 +1,3 @@
-// Package mmap provides memory mapped related utilities.
 package mmap
 
 import "os"

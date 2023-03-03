@@ -1,16 +1,14 @@
 ---
 title: "Google drive"
 description: "Rclone docs for Google drive"
-versionIntroduced: "v0.91"
 ---
 
-# {{< icon "fab fa-google" >}} Google Drive
+{{< icon "fab fa-google" >}} Google Drive
+-----------------------------------------
 
 Paths are specified as `drive:path`
 
 Drive paths may be as deep as required, e.g. `drive:directory/subdirectory`.
-
-## Configuration
 
 The initial setup for drive involves getting a token from Google drive
 which you need to do in your browser.  `rclone config` walks you
@@ -23,7 +21,7 @@ Here is an example of how to make a remote called `remote`.  First run:
 This will guide you through an interactive setup process:
 
 ```
-No remotes found, make a new one?
+No remotes found - make a new one
 n) New remote
 r) Rename remote
 c) Copy remote
@@ -59,13 +57,14 @@ Choose a number from below, or type in your own value
  5 | does not allow any access to read or download file content.
    \ "drive.metadata.readonly"
 scope> 1
+ID of the root folder - leave blank normally.  Fill in to access "Computers" folders. (see docs).
+root_folder_id> 
 Service Account Credentials JSON file path - needed only if you want use SA instead of interactive login.
 service_account_file>
 Remote config
-Use web browser to automatically authenticate rclone with remote?
- * Say Y if the machine running rclone has a web browser you can use
- * Say N if running rclone on a (remote) machine without web browser access
-If not sure try Y. If Y failed, try N.
+Use auto config?
+ * Say Y if not sure
+ * Say N if you are working on a remote or headless machine or Y didn't work
 y) Yes
 n) No
 y/n> y
@@ -73,7 +72,7 @@ If your browser doesn't open automatically go to the following link: http://127.
 Log in and authorize rclone for access
 Waiting for code...
 Got code
-Configure this as a Shared Drive (Team Drive)?
+Configure this as a team drive?
 y) Yes
 n) No
 y/n> n
@@ -92,15 +91,11 @@ d) Delete this remote
 y/e/d> y
 ```
 
-See the [remote setup docs](/remote_setup/) for how to set it up on a
-machine with no Internet browser available.
-
 Note that rclone runs a webserver on your local machine to collect the
-token as returned from Google if using web browser to automatically 
-authenticate. This only
+token as returned from Google if you use auto config mode. This only
 runs from the moment it opens your browser to the moment you get back
-the verification code.  This is on `http://127.0.0.1:53682/` and it
-may require you to unblock it temporarily if you are running a host
+the verification code.  This is on `http://127.0.0.1:53682/` and this
+it may require you to unblock it temporarily if you are running a host
 firewall, or use manual mode.
 
 You can then use it like this,
@@ -117,7 +112,7 @@ To copy a local directory to a drive directory called backup
 
     rclone copy /home/source remote:backup
 
-### Scopes
+### Scopes ###
 
 Rclone allows you to select which scope you would like for rclone to
 use.  This changes what type of token is granted to rclone.  [The
@@ -126,19 +121,19 @@ here](https://developers.google.com/drive/v3/web/about-auth).
 
 The scope are
 
-#### drive
+#### drive ####
 
 This is the default scope and allows full access to all files, except
 for the Application Data Folder (see below).
 
 Choose this one if you aren't sure.
 
-#### drive.readonly
+#### drive.readonly ####
 
 This allows read only access to all files.  Files may be listed and
 downloaded but not uploaded, renamed or deleted.
 
-#### drive.file
+#### drive.file ####
 
 With this scope rclone can read/view/modify only those files and
 folders it creates.
@@ -151,21 +146,21 @@ to be sure confidential data on your drive is not visible to rclone.
 
 Files created with this scope are visible in the web interface.
 
-#### drive.appfolder
+#### drive.appfolder ####
 
 This gives rclone its own private area to store files.  Rclone will
 not be able to see any other files on your drive and you won't be able
 to see rclone's files from the web interface either.
 
-#### drive.metadata.readonly
+#### drive.metadata.readonly ####
 
 This allows read only access to file names only.  It does not allow
 rclone to download or upload data, or rename or delete files or
 directories.
 
-### Root folder ID
+### Root folder ID ###
 
-This option has been moved to the advanced section. You can set the `root_folder_id` for rclone.  This is the directory
+You can set the `root_folder_id` for rclone.  This is the directory
 (identified by its `Folder ID`) that rclone considers to be the root
 of your drive.
 
@@ -196,7 +191,7 @@ There doesn't appear to be an API to discover the folder IDs of the
 Note also that rclone can't access any data under the "Backups" tab on
 the google drive web interface yet.
 
-### Service Account support
+### Service Account support ###
 
 You can set up rclone with Google Drive in an unattended mode,
 i.e. not tied to a specific end-user Google account. This is useful
@@ -211,7 +206,7 @@ credentials file into the rclone config file, you can set
 `service_account_credentials` with the actual contents of the file
 instead, or set the equivalent environment variable.
 
-#### Use case - Google Apps/G-suite account and individual Drive
+#### Use case - Google Apps/G-suite account and individual Drive ####
 
 Let's say that you are the administrator of a Google Apps (old) or
 G-suite account.
@@ -222,7 +217,7 @@ We'll call the domain **example.com**, and the user
 
 There's a few steps we need to go through to accomplish this:
 
-##### 1. Create a service account for example.com
+##### 1. Create a service account for example.com #####
   - To create a service account and obtain its credentials, go to the
 [Google Developer Console](https://console.developers.google.com).
   - You must have a project - create one if you don't.
@@ -237,7 +232,7 @@ with something that identifies your client. "Role" can be empty.
 If you ever need to remove access, press the "Delete service
 account key" button.
 
-##### 2. Allowing API access to example.com Google Drive
+##### 2. Allowing API access to example.com Google Drive #####
   - Go to example.com's admin console
   - Go into "Security" (or use the search bar)
   - Select "Show more" and then "Advanced settings"
@@ -251,7 +246,7 @@ It is a ~21 character numerical string.
 `https://www.googleapis.com/auth/drive`
 to grant access to Google Drive specifically.
 
-##### 3. Configure rclone, assuming a new install
+##### 3. Configure rclone, assuming a new install #####
 
 ```
 rclone config
@@ -264,11 +259,11 @@ client_secret>   # Can be left blank
 scope>           # Select your scope, 1 for example
 root_folder_id>  # Can be left blank
 service_account_file> /home/foo/myJSONfile.json # This is where the JSON file goes!
-y/n>             # Auto config, n
+y/n>             # Auto config, y
 
 ```
 
-##### 4. Verify that it's working
+##### 4. Verify that it's working #####
   - `rclone -v --drive-impersonate foo@example.com lsf gdrive:backup`
   - The arguments do:
     - `-v` - verbose logging
@@ -281,27 +276,26 @@ the folder named backup.
 Note: in case you configured a specific root folder on gdrive and rclone is unable to access the contents of that folder when using `--drive-impersonate`, do this instead:
   - in the gdrive web interface, share your root folder with the user/email of the new Service Account you created/selected at step #1
   - use rclone without specifying the `--drive-impersonate` option, like this:
-        `rclone -v lsf gdrive:backup`
+        `rclone -v foo@example.com lsf gdrive:backup`
 
 
-### Shared drives (team drives)
+### Team drives ###
 
-If you want to configure the remote to point to a Google Shared Drive
-(previously known as Team Drives) then answer `y` to the question
-`Configure this as a Shared Drive (Team Drive)?`.
+If you want to configure the remote to point to a Google Team Drive
+then answer `y` to the question `Configure this as a team drive?`.
 
-This will fetch the list of Shared Drives from google and allow you to
-configure which one you want to use. You can also type in a Shared
-Drive ID if you prefer.
+This will fetch the list of Team Drives from google and allow you to
+configure which one you want to use.  You can also type in a team
+drive ID if you prefer.
 
 For example:
 
 ```
-Configure this as a Shared Drive (Team Drive)?
+Configure this as a team drive?
 y) Yes
 n) No
 y/n> y
-Fetching Shared Drive list...
+Fetching team drive list...
 Choose a number from below, or type in your own value
  1 / Rclone Test
    \ "xxxxxxxxxxxxxxxxxxxx"
@@ -309,7 +303,7 @@ Choose a number from below, or type in your own value
    \ "yyyyyyyyyyyyyyyyyyyy"
  3 / Rclone Test 3
    \ "zzzzzzzzzzzzzzzzzzzz"
-Enter a Shared Drive ID> 1
+Enter a Team Drive ID> 1
 --------------------
 [remote]
 client_id =
@@ -323,7 +317,7 @@ d) Delete this remote
 y/e/d> y
 ```
 
-### --fast-list
+### --fast-list ###
 
 This remote supports `--fast-list` which allows you to use fewer
 transactions in exchange for more memory. See the [rclone
@@ -362,11 +356,11 @@ large folder (10600 directories, 39000 files):
 - without `--fast-list`: 22:05 min
 - with `--fast-list`: 58s
 
-### Modified time
+### Modified time ###
 
 Google drive stores modification times accurate to 1 ms.
 
-### Restricted filename characters
+#### Restricted filename characters
 
 Only Invalid UTF-8 bytes will be [replaced](/overview/#invalid-utf8),
 as they can't be used in JSON strings.
@@ -374,7 +368,7 @@ as they can't be used in JSON strings.
 In contrast to other backends, `/` can also be used in names and `.`
 or `..` are valid names.
 
-### Revisions
+### Revisions ###
 
 Google drive stores revisions of files.  When you upload a change to
 an existing file to google drive using rclone it will create a new
@@ -386,14 +380,14 @@ was
   * They are deleted after 30 days or 100 revisions (whatever comes first).
   * They do not count towards a user storage quota.
 
-### Deleting files
+### Deleting files ###
 
 By default rclone will send all files to the trash when deleting
 files.  If deleting them permanently is required then use the
 `--drive-use-trash=false` flag, or set the equivalent environment
 variable.
 
-### Shortcuts
+### Shortcuts ###
 
 In March 2020 Google introduced a new feature in Google Drive called
 [drive shortcuts](https://support.google.com/drive/answer/9700156)
@@ -414,7 +408,7 @@ For shortcuts pointing to files:
 - When downloading the contents of the destination file is downloaded.
 - When updating shortcut file with a non shortcut file, the shortcut is removed then a new file is uploaded in place of the shortcut.
 - When server-side moving (renaming) the shortcut is renamed, not the destination file.
-- When server-side copying the shortcut is copied, not the contents of the shortcut. (unless `--drive-copy-shortcut-content` is in use in which case the contents of the shortcut gets copied).
+- When server-side copying the shortcut is copied, not the contents of the shortcut.
 - When deleting the shortcut is deleted not the linked file.
 - When setting the modification time, the modification time of the linked file will be set.
 
@@ -433,7 +427,7 @@ The [rclone backend](https://rclone.org/commands/rclone_backend/) command can be
 Shortcuts can be completely ignored with the `--drive-skip-shortcuts` flag
 or the corresponding `skip_shortcuts` configuration setting.
 
-### Emptying trash
+### Emptying trash ###
 
 If you wish to empty your trash you can use the `rclone cleanup remote:`
 command which will permanently delete all your trashed files. This command
@@ -443,7 +437,7 @@ Note that Google Drive takes some time (minutes to days) to empty the
 trash even though the command returns within a few seconds.  No output
 is echoed, so there will be no confirmation even using -v or -vv.
 
-### Quota information
+### Quota information ###
 
 To view your current quota you can use the `rclone about remote:`
 command which will display your usage limit (quota), the usage in Google
@@ -451,7 +445,7 @@ Drive, the size of all files in the Trash and the space used by other
 Google services such as Gmail. This command does not take any path
 arguments.
 
-#### Import/Export of google documents
+#### Import/Export of google documents ####
 
 Google documents can be exported from and uploaded to Google Drive.
 
@@ -513,28 +507,23 @@ represent the currently available conversions.
 
 | Extension | Mime Type | Description |
 | --------- |-----------| ------------|
-| bmp  | image/bmp | Windows Bitmap format |
 | csv  | text/csv | Standard CSV format for Spreadsheets |
-| doc  | application/msword | Classic Word file |
 | docx | application/vnd.openxmlformats-officedocument.wordprocessingml.document | Microsoft Office Document |
 | epub | application/epub+zip | E-book format |
 | html | text/html | An HTML Document |
 | jpg  | image/jpeg | A JPEG Image File |
-| json | application/vnd.google-apps.script+json | JSON Text Format for Google Apps scripts |
+| json | application/vnd.google-apps.script+json | JSON Text Format |
 | odp  | application/vnd.oasis.opendocument.presentation | Openoffice Presentation |
 | ods  | application/vnd.oasis.opendocument.spreadsheet | Openoffice Spreadsheet |
 | ods  | application/x-vnd.oasis.opendocument.spreadsheet | Openoffice Spreadsheet |
 | odt  | application/vnd.oasis.opendocument.text | Openoffice Document |
 | pdf  | application/pdf | Adobe PDF Format |
-| pjpeg | image/pjpeg | Progressive JPEG Image |
 | png  | image/png | PNG Image Format|
 | pptx | application/vnd.openxmlformats-officedocument.presentationml.presentation | Microsoft Office Powerpoint |
 | rtf  | application/rtf | Rich Text Format |
 | svg  | image/svg+xml | Scalable Vector Graphics Format |
 | tsv  | text/tab-separated-values | Standard TSV format for spreadsheets |
 | txt  | text/plain | Plain Text |
-| wmf  | application/x-msmetafile | Windows Meta File |
-| xls  | application/vnd.ms-excel | Classic Excel file |
 | xlsx | application/vnd.openxmlformats-officedocument.spreadsheetml.sheet | Microsoft Office Spreadsheet |
 | zip  | application/zip | A ZIP file of HTML, Images CSS |
 
@@ -552,47 +541,38 @@ Google Documents.
 | webloc | macOS specific XML format | macOS |
 
 {{< rem autogenerated options start" - DO NOT EDIT - instead edit fs.RegInfo in backend/drive/drive.go then run make backenddocs" >}}
-### Standard options
+### Standard Options
 
-Here are the Standard options specific to drive (Google Drive).
+Here are the standard options specific to drive (Google Drive).
 
 #### --drive-client-id
 
-Google Application Client Id
-Setting your own is recommended.
-See https://rclone.org/drive/#making-your-own-client-id for how to create your own.
-If you leave this blank, it will use an internal key which is low performance.
-
-Properties:
+OAuth Client Id
+Leave blank normally.
 
 - Config:      client_id
 - Env Var:     RCLONE_DRIVE_CLIENT_ID
 - Type:        string
-- Required:    false
+- Default:     ""
 
 #### --drive-client-secret
 
-OAuth Client Secret.
-
+OAuth Client Secret
 Leave blank normally.
-
-Properties:
 
 - Config:      client_secret
 - Env Var:     RCLONE_DRIVE_CLIENT_SECRET
 - Type:        string
-- Required:    false
+- Default:     ""
 
 #### --drive-scope
 
 Scope that rclone should use when requesting access from drive.
 
-Properties:
-
 - Config:      scope
 - Env Var:     RCLONE_DRIVE_SCOPE
 - Type:        string
-- Required:    false
+- Default:     ""
 - Examples:
     - "drive"
         - Full access all files, excluding Application Data Folder.
@@ -609,120 +589,99 @@ Properties:
         - Allows read-only access to file metadata but
         - does not allow any access to read or download file content.
 
-#### --drive-service-account-file
-
-Service Account Credentials JSON file path.
-
-Leave blank normally.
-Needed only if you want use SA instead of interactive login.
-
-Leading `~` will be expanded in the file name as will environment variables such as `${RCLONE_CONFIG_DIR}`.
-
-Properties:
-
-- Config:      service_account_file
-- Env Var:     RCLONE_DRIVE_SERVICE_ACCOUNT_FILE
-- Type:        string
-- Required:    false
-
-#### --drive-alternate-export
-
-Deprecated: No longer needed.
-
-Properties:
-
-- Config:      alternate_export
-- Env Var:     RCLONE_DRIVE_ALTERNATE_EXPORT
-- Type:        bool
-- Default:     false
-
-### Advanced options
-
-Here are the Advanced options specific to drive (Google Drive).
-
-#### --drive-token
-
-OAuth Access Token as a JSON blob.
-
-Properties:
-
-- Config:      token
-- Env Var:     RCLONE_DRIVE_TOKEN
-- Type:        string
-- Required:    false
-
-#### --drive-auth-url
-
-Auth server URL.
-
-Leave blank to use the provider defaults.
-
-Properties:
-
-- Config:      auth_url
-- Env Var:     RCLONE_DRIVE_AUTH_URL
-- Type:        string
-- Required:    false
-
-#### --drive-token-url
-
-Token server url.
-
-Leave blank to use the provider defaults.
-
-Properties:
-
-- Config:      token_url
-- Env Var:     RCLONE_DRIVE_TOKEN_URL
-- Type:        string
-- Required:    false
-
 #### --drive-root-folder-id
 
-ID of the root folder.
+ID of the root folder
 Leave blank normally.
 
 Fill in to access "Computers" folders (see docs), or for rclone to use
 a non root folder as its starting point.
 
 
-Properties:
-
 - Config:      root_folder_id
 - Env Var:     RCLONE_DRIVE_ROOT_FOLDER_ID
 - Type:        string
-- Required:    false
+- Default:     ""
 
-#### --drive-service-account-credentials
+#### --drive-service-account-file
 
-Service Account Credentials JSON blob.
-
+Service Account Credentials JSON file path 
 Leave blank normally.
 Needed only if you want use SA instead of interactive login.
 
-Properties:
+Leading `~` will be expanded in the file name as will environment variables such as `${RCLONE_CONFIG_DIR}`.
+
+
+- Config:      service_account_file
+- Env Var:     RCLONE_DRIVE_SERVICE_ACCOUNT_FILE
+- Type:        string
+- Default:     ""
+
+#### --drive-alternate-export
+
+Deprecated: no longer needed
+
+- Config:      alternate_export
+- Env Var:     RCLONE_DRIVE_ALTERNATE_EXPORT
+- Type:        bool
+- Default:     false
+
+### Advanced Options
+
+Here are the advanced options specific to drive (Google Drive).
+
+#### --drive-token
+
+OAuth Access Token as a JSON blob.
+
+- Config:      token
+- Env Var:     RCLONE_DRIVE_TOKEN
+- Type:        string
+- Default:     ""
+
+#### --drive-auth-url
+
+Auth server URL.
+Leave blank to use the provider defaults.
+
+- Config:      auth_url
+- Env Var:     RCLONE_DRIVE_AUTH_URL
+- Type:        string
+- Default:     ""
+
+#### --drive-token-url
+
+Token server url.
+Leave blank to use the provider defaults.
+
+- Config:      token_url
+- Env Var:     RCLONE_DRIVE_TOKEN_URL
+- Type:        string
+- Default:     ""
+
+#### --drive-service-account-credentials
+
+Service Account Credentials JSON blob
+Leave blank normally.
+Needed only if you want use SA instead of interactive login.
 
 - Config:      service_account_credentials
 - Env Var:     RCLONE_DRIVE_SERVICE_ACCOUNT_CREDENTIALS
 - Type:        string
-- Required:    false
+- Default:     ""
 
 #### --drive-team-drive
 
-ID of the Shared Drive (Team Drive).
-
-Properties:
+ID of the Team Drive
 
 - Config:      team_drive
 - Env Var:     RCLONE_DRIVE_TEAM_DRIVE
 - Type:        string
-- Required:    false
+- Default:     ""
 
 #### --drive-auth-owner-only
 
 Only consider files owned by the authenticated user.
-
-Properties:
 
 - Config:      auth_owner_only
 - Env Var:     RCLONE_DRIVE_AUTH_OWNER_ONLY
@@ -732,41 +691,18 @@ Properties:
 #### --drive-use-trash
 
 Send files to the trash instead of deleting permanently.
-
 Defaults to true, namely sending files to the trash.
 Use `--drive-use-trash=false` to delete files permanently instead.
-
-Properties:
 
 - Config:      use_trash
 - Env Var:     RCLONE_DRIVE_USE_TRASH
 - Type:        bool
 - Default:     true
 
-#### --drive-copy-shortcut-content
-
-Server side copy contents of shortcuts instead of the shortcut.
-
-When doing server side copies, normally rclone will copy shortcuts as
-shortcuts.
-
-If this flag is used then rclone will copy the contents of shortcuts
-rather than shortcuts themselves when doing server side copies.
-
-Properties:
-
-- Config:      copy_shortcut_content
-- Env Var:     RCLONE_DRIVE_COPY_SHORTCUT_CONTENT
-- Type:        bool
-- Default:     false
-
 #### --drive-skip-gdocs
 
 Skip google documents in all listings.
-
 If given, gdocs practically become invisible to rclone.
-
-Properties:
 
 - Config:      skip_gdocs
 - Env Var:     RCLONE_DRIVE_SKIP_GDOCS
@@ -788,8 +724,6 @@ Google photos are identified by being in the "photos" space.
 Corrupted checksums are caused by Google modifying the image/video but
 not updating the checksum.
 
-Properties:
-
 - Config:      skip_checksum_gphotos
 - Env Var:     RCLONE_DRIVE_SKIP_CHECKSUM_GPHOTOS
 - Type:        bool
@@ -806,8 +740,6 @@ with you).
 This works both with the "list" (lsd, lsl, etc.) and the "copy"
 commands (copy, sync, etc.), and with all other commands too.
 
-Properties:
-
 - Config:      shared_with_me
 - Env Var:     RCLONE_DRIVE_SHARED_WITH_ME
 - Type:        bool
@@ -816,10 +748,7 @@ Properties:
 #### --drive-trashed-only
 
 Only show files that are in the trash.
-
 This will show trashed files in their original directory structure.
-
-Properties:
 
 - Config:      trashed_only
 - Env Var:     RCLONE_DRIVE_TRASHED_ONLY
@@ -830,8 +759,6 @@ Properties:
 
 Only show files that are starred.
 
-Properties:
-
 - Config:      starred_only
 - Env Var:     RCLONE_DRIVE_STARRED_ONLY
 - Type:        bool
@@ -839,20 +766,16 @@ Properties:
 
 #### --drive-formats
 
-Deprecated: See export_formats.
-
-Properties:
+Deprecated: see export_formats
 
 - Config:      formats
 - Env Var:     RCLONE_DRIVE_FORMATS
 - Type:        string
-- Required:    false
+- Default:     ""
 
 #### --drive-export-formats
 
 Comma separated list of preferred formats for downloading Google docs.
-
-Properties:
 
 - Config:      export_formats
 - Env Var:     RCLONE_DRIVE_EXPORT_FORMATS
@@ -863,20 +786,14 @@ Properties:
 
 Comma separated list of preferred formats for uploading Google docs.
 
-Properties:
-
 - Config:      import_formats
 - Env Var:     RCLONE_DRIVE_IMPORT_FORMATS
 - Type:        string
-- Required:    false
+- Default:     ""
 
 #### --drive-allow-import-name-change
 
-Allow the filetype to change when uploading Google docs.
-
-E.g. file.doc to file.docx. This will confuse sync and reupload every time.
-
-Properties:
+Allow the filetype to change when uploading Google docs (e.g. file.doc to file.docx). This will confuse sync and reupload every time.
 
 - Config:      allow_import_name_change
 - Env Var:     RCLONE_DRIVE_ALLOW_IMPORT_NAME_CHANGE
@@ -885,7 +802,7 @@ Properties:
 
 #### --drive-use-created-date
 
-Use file created date instead of modified date.
+Use file created date instead of modified date.,
 
 Useful when downloading data and you want the creation date used in
 place of the last modified date.
@@ -903,8 +820,6 @@ Photos folder" option in your google drive settings. You can then copy
 or move the photos locally and use the date the image was taken
 (created) set as the modification date.
 
-Properties:
-
 - Config:      use_created_date
 - Env Var:     RCLONE_DRIVE_USE_CREATED_DATE
 - Type:        bool
@@ -920,8 +835,6 @@ unexpected consequences when uploading/downloading files.
 If both this flag and "--drive-use-created-date" are set, the created
 date is used.
 
-Properties:
-
 - Config:      use_shared_date
 - Env Var:     RCLONE_DRIVE_USE_SHARED_DATE
 - Type:        bool
@@ -929,9 +842,7 @@ Properties:
 
 #### --drive-list-chunk
 
-Size of listing chunk 100-1000, 0 to disable.
-
-Properties:
+Size of listing chunk 100-1000. 0 to disable.
 
 - Config:      list_chunk
 - Env Var:     RCLONE_DRIVE_LIST_CHUNK
@@ -942,41 +853,33 @@ Properties:
 
 Impersonate this user when using a service account.
 
-Properties:
-
 - Config:      impersonate
 - Env Var:     RCLONE_DRIVE_IMPERSONATE
 - Type:        string
-- Required:    false
+- Default:     ""
 
 #### --drive-upload-cutoff
 
-Cutoff for switching to chunked upload.
-
-Properties:
+Cutoff for switching to chunked upload
 
 - Config:      upload_cutoff
 - Env Var:     RCLONE_DRIVE_UPLOAD_CUTOFF
 - Type:        SizeSuffix
-- Default:     8Mi
+- Default:     8M
 
 #### --drive-chunk-size
 
-Upload chunk size.
-
-Must a power of 2 >= 256k.
+Upload chunk size. Must a power of 2 >= 256k.
 
 Making this larger will improve performance, but note that each chunk
 is buffered in memory one per transfer.
 
 Reducing this will reduce memory usage but decrease performance.
 
-Properties:
-
 - Config:      chunk_size
 - Env Var:     RCLONE_DRIVE_CHUNK_SIZE
 - Type:        SizeSuffix
-- Default:     8Mi
+- Default:     8M
 
 #### --drive-acknowledge-abuse
 
@@ -988,8 +891,6 @@ as malware or spam and cannot be downloaded" with the error code
 indicate you acknowledge the risks of downloading the file and rclone
 will download it anyway.
 
-Properties:
-
 - Config:      acknowledge_abuse
 - Env Var:     RCLONE_DRIVE_ACKNOWLEDGE_ABUSE
 - Type:        bool
@@ -998,8 +899,6 @@ Properties:
 #### --drive-keep-revision-forever
 
 Keep new head revision of each file forever.
-
-Properties:
 
 - Config:      keep_revision_forever
 - Env Var:     RCLONE_DRIVE_KEEP_REVISION_FOREVER
@@ -1023,8 +922,6 @@ doing rclone ls/lsl/lsf/lsjson/etc only.
 If you do use this flag for syncing (not recommended) then you will
 need to use --ignore size also.
 
-Properties:
-
 - Config:      size_as_quota
 - Env Var:     RCLONE_DRIVE_SIZE_AS_QUOTA
 - Type:        bool
@@ -1033,8 +930,6 @@ Properties:
 #### --drive-v2-download-min-size
 
 If Object's are greater, use drive v2 API to download.
-
-Properties:
 
 - Config:      v2_download_min_size
 - Env Var:     RCLONE_DRIVE_V2_DOWNLOAD_MIN_SIZE
@@ -1045,8 +940,6 @@ Properties:
 
 Minimum time to sleep between API calls.
 
-Properties:
-
 - Config:      pacer_min_sleep
 - Env Var:     RCLONE_DRIVE_PACER_MIN_SLEEP
 - Type:        Duration
@@ -1055,8 +948,6 @@ Properties:
 #### --drive-pacer-burst
 
 Number of API calls to allow without sleeping.
-
-Properties:
 
 - Config:      pacer_burst
 - Env Var:     RCLONE_DRIVE_PACER_BURST
@@ -1072,8 +963,6 @@ different Google drives.  Note that this isn't enabled by default
 because it isn't easy to tell if it will work between any two
 configurations.
 
-Properties:
-
 - Config:      server_side_across_configs
 - Env Var:     RCLONE_DRIVE_SERVER_SIDE_ACROSS_CONFIGS
 - Type:        bool
@@ -1081,7 +970,7 @@ Properties:
 
 #### --drive-disable-http2
 
-Disable drive using http2.
+Disable drive using http2
 
 There is currently an unsolved issue with the google drive backend and
 HTTP/2.  HTTP/2 is therefore disabled by default for the drive backend
@@ -1092,8 +981,6 @@ See: https://github.com/rclone/rclone/issues/3631
 
 
 
-Properties:
-
 - Config:      disable_http2
 - Env Var:     RCLONE_DRIVE_DISABLE_HTTP2
 - Type:        bool
@@ -1101,9 +988,9 @@ Properties:
 
 #### --drive-stop-on-upload-limit
 
-Make upload limit errors be fatal.
+Make upload limit errors be fatal
 
-At the time of writing it is only possible to upload 750 GiB of data to
+At the time of writing it is only possible to upload 750GB of data to
 Google Drive a day (this is an undocumented limit). When this limit is
 reached Google Drive produces a slightly different error message. When
 this flag is set it causes these errors to be fatal.  These will stop
@@ -1115,106 +1002,37 @@ Google don't document so it may break in the future.
 See: https://github.com/rclone/rclone/issues/3857
 
 
-Properties:
-
 - Config:      stop_on_upload_limit
 - Env Var:     RCLONE_DRIVE_STOP_ON_UPLOAD_LIMIT
 - Type:        bool
 - Default:     false
 
-#### --drive-stop-on-download-limit
-
-Make download limit errors be fatal.
-
-At the time of writing it is only possible to download 10 TiB of data from
-Google Drive a day (this is an undocumented limit). When this limit is
-reached Google Drive produces a slightly different error message. When
-this flag is set it causes these errors to be fatal.  These will stop
-the in-progress sync.
-
-Note that this detection is relying on error message strings which
-Google don't document so it may break in the future.
-
-
-Properties:
-
-- Config:      stop_on_download_limit
-- Env Var:     RCLONE_DRIVE_STOP_ON_DOWNLOAD_LIMIT
-- Type:        bool
-- Default:     false
-
 #### --drive-skip-shortcuts
 
-If set skip shortcut files.
+If set skip shortcut files
 
 Normally rclone dereferences shortcut files making them appear as if
 they are the original file (see [the shortcuts section](#shortcuts)).
 If this flag is set then rclone will ignore shortcut files completely.
 
 
-Properties:
-
 - Config:      skip_shortcuts
 - Env Var:     RCLONE_DRIVE_SKIP_SHORTCUTS
 - Type:        bool
 - Default:     false
 
-#### --drive-skip-dangling-shortcuts
-
-If set skip dangling shortcut files.
-
-If this is set then rclone will not show any dangling shortcuts in listings.
-
-
-Properties:
-
-- Config:      skip_dangling_shortcuts
-- Env Var:     RCLONE_DRIVE_SKIP_DANGLING_SHORTCUTS
-- Type:        bool
-- Default:     false
-
-#### --drive-resource-key
-
-Resource key for accessing a link-shared file.
-
-If you need to access files shared with a link like this
-
-    https://drive.google.com/drive/folders/XXX?resourcekey=YYY&usp=sharing
-
-Then you will need to use the first part "XXX" as the "root_folder_id"
-and the second part "YYY" as the "resource_key" otherwise you will get
-404 not found errors when trying to access the directory.
-
-See: https://developers.google.com/drive/api/guides/resource-keys
-
-This resource key requirement only applies to a subset of old files.
-
-Note also that opening the folder once in the web interface (with the
-user you've authenticated rclone with) seems to be enough so that the
-resource key is no needed.
-
-
-Properties:
-
-- Config:      resource_key
-- Env Var:     RCLONE_DRIVE_RESOURCE_KEY
-- Type:        string
-- Required:    false
-
 #### --drive-encoding
 
-The encoding for the backend.
+This sets the encoding for the backend.
 
-See the [encoding section in the overview](/overview/#encoding) for more info.
-
-Properties:
+See: the [encoding section in the overview](/overview/#encoding) for more info.
 
 - Config:      encoding
 - Env Var:     RCLONE_DRIVE_ENCODING
 - Type:        MultiEncoder
 - Default:     InvalidUtf8
 
-## Backend commands
+### Backend commands
 
 Here are the commands specific to the drive backend.
 
@@ -1224,13 +1042,13 @@ Run them with
 
 The help below will explain what arguments each command takes.
 
-See the [backend](/commands/rclone_backend/) command for more
+See [the "rclone backend" command](/commands/rclone_backend/) for more
 info on how to pass options and arguments.
 
 These can be run on a running backend using the rc command
-[backend/command](/rc/#backend-command).
+[backend/command](/rc/#backend/command).
 
-### get
+#### get
 
 Get command for fetching the drive config parameters
 
@@ -1249,7 +1067,7 @@ Options:
 - "chunk_size": show the current upload chunk size
 - "service_account_file": show the current service account file
 
-### set
+#### set
 
 Set command for updating the drive config parameters
 
@@ -1268,7 +1086,7 @@ Options:
 - "chunk_size": update the current upload chunk size
 - "service_account_file": update the current service account file
 
-### shortcut
+#### shortcut
 
 Create shortcuts from files or directories
 
@@ -1296,18 +1114,18 @@ Options:
 
 - "target": optional target remote for the shortcut destination
 
-### drives
+#### drives
 
-List the Shared Drives available to this account
+List the shared drives available to this account
 
     rclone backend drives remote: [options] [<arguments>+]
 
-This command lists the Shared Drives (Team Drives) available to this
+This command lists the shared drives (teamdrives) available to this
 account.
 
 Usage:
 
-    rclone backend [-o config] drives drive:
+    rclone backend drives drive:
 
 This will return a JSON list of objects like this
 
@@ -1324,30 +1142,9 @@ This will return a JSON list of objects like this
         }
     ]
 
-With the -o config parameter it will output the list in a format
-suitable for adding to a config file to make aliases for all the
-drives found and a combined drive.
-
-    [My Drive]
-    type = alias
-    remote = drive,team_drive=0ABCDEF-01234567890,root_folder_id=:
-
-    [Test Drive]
-    type = alias
-    remote = drive,team_drive=0ABCDEFabcdefghijkl,root_folder_id=:
-
-    [AllDrives]
-    type = combine
-    upstreams = "My Drive=My Drive:" "Test Drive=Test Drive:"
-
-Adding this to the rclone config file will cause those team drives to
-be accessible with the aliases shown. Any illegal characters will be
-substituted with "_" and duplicate names will have numbers suffixed.
-It will also add a remote called AllDrives which shows all the shared
-drives combined into one directory tree.
 
 
-### untrash
+#### untrash
 
 Untrash files and directories
 
@@ -1374,52 +1171,13 @@ Result:
     }
 
 
-### copyid
-
-Copy files by ID
-
-    rclone backend copyid remote: [options] [<arguments>+]
-
-This command copies files by ID
-
-Usage:
-
-    rclone backend copyid drive: ID path
-    rclone backend copyid drive: ID1 path1 ID2 path2
-
-It copies the drive file with ID given to the path (an rclone path which
-will be passed internally to rclone copyto). The ID and path pairs can be
-repeated.
-
-The path should end with a / to indicate copy the file as named to
-this directory. If it doesn't end with a / then the last path
-component will be used as the file name.
-
-If the destination is a drive backend then server-side copying will be
-attempted if possible.
-
-Use the -i flag to see what would be copied before copying.
-
-
-### exportformats
-
-Dump the export formats for debug purposes
-
-    rclone backend exportformats remote: [options] [<arguments>+]
-
-### importformats
-
-Dump the import formats for debug purposes
-
-    rclone backend importformats remote: [options] [<arguments>+]
-
 {{< rem autogenerated options stop >}}
 
-## Limitations
+### Limitations ###
 
 Drive has quite a lot of rate limiting.  This causes rclone to be
 limited to transferring about 2 files per second only.  Individual
-files may be transferred much faster at 100s of MiB/s but lots of
+files may be transferred much faster at 100s of MBytes/s but lots of
 small files can take a long time.
 
 Server side copies are also subject to a separate rate limit. If you
@@ -1427,13 +1185,10 @@ see User rate limit exceeded errors, wait at least 24 hours and retry.
 You can disable server-side copies with `--disable copy` to download
 and upload the files if you prefer.
 
-### Limitations of Google Docs
+#### Limitations of Google Docs ####
 
-Google docs will appear as size -1 in `rclone ls`, `rclone ncdu` etc,
-and as size 0 in anything which uses the VFS layer, e.g. `rclone mount`
-and `rclone serve`. When calculating directory totals, e.g. in
-`rclone size` and `rclone ncdu`, they will be counted in as empty
-files.
+Google docs will appear as size -1 in `rclone ls` and as size 0 in
+anything which uses the VFS layer, e.g. `rclone mount`, `rclone serve`.
 
 This is because rclone can't find out the size of the Google docs
 without downloading them.
@@ -1448,7 +1203,7 @@ correct size and be downloadable. Whether it will work on not depends
 on the application accessing the mount and the OS you are running -
 experiment to find out if it does work for you!
 
-### Duplicated files
+### Duplicated files ###
 
 Sometimes, for no reason I've been able to track down, drive will
 duplicate a file that rclone uploads.  Drive unlike all the other
@@ -1462,7 +1217,7 @@ Use `rclone dedupe` to fix duplicated files.
 Note that this isn't just a problem with rclone, even Google Photos on
 Android duplicates files on drive sometimes.
 
-### Rclone appears to be re-copying files it shouldn't
+### Rclone appears to be re-copying files it shouldn't ###
 
 The most likely cause of this is the duplicated file issue above - run
 `rclone dedupe` and check your logs for duplicate object or directory
@@ -1477,7 +1232,7 @@ Waiting a moderate period of time between attempts (estimated to be
 approximately 1 hour) and/or not using --fast-list both seem to be
 effective in preventing the problem.
 
-## Making your own client_id
+### Making your own client_id ###
 
 When you use rclone with Google drive in its default configuration you
 are using rclone's client_id.  This is shared between all the rclone
@@ -1507,36 +1262,21 @@ credentials", which opens the wizard), then "Create credentials"
 to the next step; if not, click on "CONFIGURE CONSENT SCREEN" button 
 (near the top right corner of the right panel), then select "External"
 and click on "CREATE"; on the next screen, enter an "Application name"
-("rclone" is OK); enter "User Support Email" (your own email is OK); 
-enter "Developer Contact Email" (your own email is OK); then click on
-"Save" (all other data is optional). You will also have to add some scopes,
-including `.../auth/docs` and `.../auth/drive` in order to be able to edit,
-create and delete files with RClone. You may also want to include the
-`../auth/drive.metadata.readonly` scope. After adding scopes, click
-"Save and continue" to add test users. Be sure to add your own account to
-the test users. Once you've added yourself as a test user and saved the
-changes, click again on "Credentials" on the left panel to go back to
-the "Credentials" screen.
+("rclone" is OK) then click on "Save" (all other data is optional). 
+Click again on "Credentials" on the left panel to go back to the 
+"Credentials" screen.
 
-   (PS: if you are a GSuite user, you could also select "Internal" instead
-of "External" above, but this will restrict API use to Google Workspace 
-users in your organisation). 
+(PS: if you are a GSuite user, you could also select "Internal" instead
+of "External" above, but this has not been tested/documented so far). 
 
 6.  Click on the "+ CREATE CREDENTIALS" button at the top of the screen,
 then select "OAuth client ID".
 
-7. Choose an application type of "Desktop app" and click "Create". (the default name is fine)
+7. Choose an application type of "Desktop app" if you using a Google account or "Other" if 
+you using a GSuite account and click "Create". (the default name is fine)
 
-8. It will show you a client ID and client secret. Make a note of these.
-   
-   (If you selected "External" at Step 5 continue to Step 9. 
-   If you chose "Internal" you don't need to publish and can skip straight to
-   Step 10 but your destination drive must be part of the same Google Workspace.)
-
-9. Go to "Oauth consent screen" and then click "PUBLISH APP" button and confirm.
-   You will also want to add yourself as a test user.
-
-10. Provide the noted client ID and client secret to rclone.
+8. It will show you a client ID and client secret.  Use these values
+in rclone config to add a new remote or edit an existing remote.
 
 Be aware that, due to the "enhanced security" recently introduced by
 Google, you are theoretically expected to "submit your app for verification"
@@ -1544,11 +1284,7 @@ and then wait a few weeks(!) for their response; in practice, you can go right
 ahead and use the client ID and client secret with rclone, the only issue will
 be a very scary confirmation screen shown when you connect via your browser 
 for rclone to be able to get its token-id (but as this only happens during 
-the remote configuration, it's not such a big deal). Keeping the application in
-"Testing" will work as well, but the limitation is that any grants will expire
-after a week, which can be annoying to refresh constantly. If, for whatever
-reason, a short grant time is not a problem, then keeping the application in
-testing mode would also be sufficient.
+the remote configuration, it's not such a big deal). 
 
 (Thanks to @balazer on github for these instructions.)
 

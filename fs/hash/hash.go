@@ -1,13 +1,9 @@
-// Package hash provides hash utilities for Fs.
 package hash
 
 import (
 	"crypto/md5"
 	"crypto/sha1"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"hash"
 	"hash/crc32"
@@ -15,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/jzelinskie/whirlpool"
+	"github.com/pkg/errors"
 )
 
 // Type indicates a standard hashing algorithm
@@ -23,36 +20,25 @@ type Type int
 type hashDefinition struct {
 	width    int
 	name     string
-	alias    string
 	newFunc  func() hash.Hash
 	hashType Type
 }
 
-var (
-	type2hash  = map[Type]*hashDefinition{}
-	name2hash  = map[string]*hashDefinition{}
-	alias2hash = map[string]*hashDefinition{}
-	supported  = []Type{}
-)
+var hashes []*hashDefinition
+var highestType Type = 1
 
 // RegisterHash adds a new Hash to the list and returns it Type
-func RegisterHash(name, alias string, width int, newFunc func() hash.Hash) Type {
-	hashType := Type(1 << len(supported))
-	supported = append(supported, hashType)
-
+func RegisterHash(name string, width int, newFunc func() hash.Hash) Type {
 	definition := &hashDefinition{
 		name:     name,
-		alias:    alias,
 		width:    width,
 		newFunc:  newFunc,
-		hashType: hashType,
+		hashType: highestType,
 	}
+	hashes = append(hashes, definition)
+	highestType = highestType << 1
 
-	type2hash[hashType] = definition
-	name2hash[name] = definition
-	alias2hash[alias] = definition
-
-	return hashType
+	return definition.hashType
 }
 
 // ErrUnsupported should be returned by filesystem,
@@ -74,33 +60,34 @@ var (
 
 	// CRC32 indicates CRC-32 support
 	CRC32 Type
-
-	// SHA256 indicates SHA-256 support
-	SHA256 Type
 )
 
 func init() {
-	MD5 = RegisterHash("md5", "MD5", 32, md5.New)
-	SHA1 = RegisterHash("sha1", "SHA-1", 40, sha1.New)
-	Whirlpool = RegisterHash("whirlpool", "Whirlpool", 128, whirlpool.New)
-	CRC32 = RegisterHash("crc32", "CRC-32", 8, func() hash.Hash { return crc32.NewIEEE() })
-	SHA256 = RegisterHash("sha256", "SHA-256", 64, sha256.New)
+	MD5 = RegisterHash("MD5", 32, md5.New)
+	SHA1 = RegisterHash("SHA-1", 40, sha1.New)
+	Whirlpool = RegisterHash("Whirlpool", 128, whirlpool.New)
+	CRC32 = RegisterHash("CRC-32", 8, func() hash.Hash { return crc32.NewIEEE() })
 }
 
 // Supported returns a set of all the supported hashes by
 // HashStream and MultiHasher.
 func Supported() Set {
-	return NewHashSet(supported...)
+	var types []Type
+	for _, v := range hashes {
+		types = append(types, v.hashType)
+	}
+
+	return NewHashSet(types...)
 }
 
 // Width returns the width in characters for any HashType
-func Width(hashType Type, base64Encoded bool) int {
-	if hash := type2hash[hashType]; hash != nil {
-		if base64Encoded {
-			return base64.URLEncoding.EncodedLen(hash.width / 2)
+func Width(hashType Type) int {
+	for _, v := range hashes {
+		if v.hashType == hashType {
+			return v.width
 		}
-		return hash.width
 	}
+
 	return 0
 }
 
@@ -131,30 +118,33 @@ func StreamTypes(r io.Reader, set Set) (map[Type]string, error) {
 // The function will panic if the hash type is unknown.
 func (h Type) String() string {
 	if h == None {
-		return "none"
+		return "None"
 	}
-	if hash := type2hash[h]; hash != nil {
-		return hash.name
+
+	for _, v := range hashes {
+		if v.hashType == h {
+			return v.name
+		}
 	}
-	panic(fmt.Sprintf("internal error: unknown hash type: 0x%x", int(h)))
+
+	err := fmt.Sprintf("internal error: unknown hash type: 0x%x", int(h))
+	panic(err)
 }
 
-// Set a Type from a flag.
-// Both name and alias are accepted.
+// Set a Type from a flag
 func (h *Type) Set(s string) error {
-	if s == "none" || s == "None" {
+	if s == "None" {
 		*h = None
-		return nil
 	}
-	if hash := name2hash[strings.ToLower(s)]; hash != nil {
-		*h = hash.hashType
-		return nil
+
+	for _, v := range hashes {
+		if v.name == s {
+			*h = v.hashType
+			return nil
+		}
 	}
-	if hash := alias2hash[s]; hash != nil {
-		*h = hash.hashType
-		return nil
-	}
-	return fmt.Errorf("unknown hash type %q", s)
+
+	return errors.Errorf("Unknown hash type %q", s)
 }
 
 // Type of the value
@@ -167,16 +157,25 @@ func (h Type) Type() string {
 // and this function must support all types.
 func fromTypes(set Set) (map[Type]hash.Hash, error) {
 	if !set.SubsetOf(Supported()) {
-		return nil, fmt.Errorf("requested set %08x contains unknown hash types", int(set))
+		return nil, errors.Errorf("requested set %08x contains unknown hash types", int(set))
 	}
-	hashers := map[Type]hash.Hash{}
+	var hashers = make(map[Type]hash.Hash)
 
-	for _, t := range set.Array() {
-		hash := type2hash[t]
-		if hash == nil {
-			panic(fmt.Sprintf("internal error: Unsupported hash type %v", t))
+	types := set.Array()
+	for _, t := range types {
+		for _, v := range hashes {
+			if t != v.hashType {
+				continue
+			}
+
+			hashers[t] = v.newFunc()
+			break
 		}
-		hashers[t] = hash.newFunc()
+
+		if hashers[t] == nil {
+			err := fmt.Sprintf("internal error: Unsupported hash type %v", t)
+			panic(err)
+		}
 	}
 
 	return hashers, nil
@@ -246,18 +245,6 @@ func (m *MultiHasher) Sum(hashType Type) ([]byte, error) {
 		return nil, ErrUnsupported
 	}
 	return h.Sum(nil), nil
-}
-
-// SumString returns the specified hash from the multihasher as a hex or base64 encoded string
-func (m *MultiHasher) SumString(hashType Type, base64Encoded bool) (string, error) {
-	sum, err := m.Sum(hashType)
-	if err != nil {
-		return "", err
-	}
-	if base64Encoded {
-		return base64.URLEncoding.EncodeToString(sum), nil
-	}
-	return hex.EncodeToString(sum), nil
 }
 
 // Size returns the number of bytes written
@@ -362,16 +349,4 @@ func Equals(src, dst string) bool {
 		return true
 	}
 	return src == dst
-}
-
-// HelpString returns help message with supported hashes
-func HelpString(indent int) string {
-	padding := strings.Repeat(" ", indent)
-	var help strings.Builder
-	help.WriteString(padding)
-	help.WriteString("Supported hashes are:\n")
-	for _, h := range supported {
-		fmt.Fprintf(&help, "%s  * %v\n", padding, h.String())
-	}
-	return help.String()
 }

@@ -2,14 +2,13 @@ package vfs
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"os"
 	"path"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/log"
 	"github.com/rclone/rclone/fs/operations"
@@ -39,19 +38,19 @@ type File struct {
 	inode uint64 // inode number - read only
 	size  int64  // size of file - read and written with atomic int64 - must be 64 bit aligned
 
-	muRW sync.Mutex // synchronize RWFileHandle.openPending(), RWFileHandle.close() and File.Remove
-
 	mu               sync.RWMutex                    // protects the following
 	d                *Dir                            // parent directory
 	dPath            string                          // path of parent directory. NB dir rename means all Files are flushed
 	o                fs.Object                       // NB o may be nil if file is being written
 	leaf             string                          // leaf name of the object
 	writers          []Handle                        // writers for this file
+	nwriters         int32                           // len(writers) which is read/updated with atomic
 	pendingModTime   time.Time                       // will be applied once o becomes available, i.e. after file was written
 	pendingRenameFun func(ctx context.Context) error // will be run/renamed after all writers close
-	sys              atomic.Value                    // user defined info to be attached here
-	nwriters         int32                           // len(writers) which is read/updated with atomic
 	appendMode       bool                            // file was opened with O_APPEND
+	sys              atomic.Value                    // user defined info to be attached here
+
+	muRW sync.Mutex // synchronize RWFileHandle.openPending(), RWFileHandle.close() and File.Remove
 }
 
 // newFile creates a new File
@@ -167,7 +166,7 @@ func (f *File) rename(ctx context.Context, destDir *Dir, newName string) error {
 	f.mu.RUnlock()
 
 	if features := d.Fs().Features(); features.Move == nil && features.Copy == nil {
-		err := fmt.Errorf("Fs %q can't rename files (no server-side Move or Copy)", d.Fs())
+		err := errors.Errorf("Fs %q can't rename files (no server-side Move or Copy)", d.Fs())
 		fs.Errorf(f.Path(), "Dir.Rename error: %v", err)
 		return err
 	}
@@ -290,15 +289,6 @@ func (f *File) activeWriters() int {
 	return int(atomic.LoadInt32(&f.nwriters))
 }
 
-// _roundModTime rounds the time passed in to the Precision of the
-// underlying Fs
-//
-// It should be called with the lock held
-func (f *File) _roundModTime(modTime time.Time) time.Time {
-	precision := f.d.f.Precision()
-	return modTime.Truncate(precision)
-}
-
 // ModTime returns the modified time of the file
 //
 // if NoModTime is set then it returns the mod time of the directory
@@ -310,19 +300,8 @@ func (f *File) ModTime() (modTime time.Time) {
 	if d.vfs.Opt.NoModTime {
 		return d.ModTime()
 	}
-	// Read the modtime from a dirty item if it exists
-	if f.d.vfs.Opt.CacheMode >= vfscommon.CacheModeMinimal {
-		if item := f.d.vfs.cache.DirtyItem(f._path()); item != nil {
-			modTime, err := item.GetModTime()
-			if err != nil {
-				fs.Errorf(f._path(), "ModTime: Item GetModTime failed: %v", err)
-			} else {
-				return f._roundModTime(modTime)
-			}
-		}
-	}
 	if !pendingModTime.IsZero() {
-		return f._roundModTime(pendingModTime)
+		return pendingModTime
 	}
 	if o == nil {
 		return time.Now()
@@ -400,14 +379,7 @@ func (f *File) _applyPendingModTime() error {
 	defer func() { f.pendingModTime = time.Time{} }()
 
 	if f.o == nil {
-		return errors.New("cannot apply ModTime, file object is not available")
-	}
-
-	dt := f.pendingModTime.Sub(f.o.ModTime(context.Background()))
-	modifyWindow := f.o.Fs().Precision()
-	if dt < modifyWindow && dt > -modifyWindow {
-		fs.Debugf(f.o, "Not setting pending mod time %v as it is already set", f.pendingModTime)
-		return nil
+		return errors.New("Cannot apply ModTime, file object is not available")
 	}
 
 	// set the time of the object
@@ -423,13 +395,6 @@ func (f *File) _applyPendingModTime() error {
 	}
 
 	return nil
-}
-
-// Apply a pending mod time
-func (f *File) applyPendingModTime() error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f._applyPendingModTime()
 }
 
 // _writingInProgress returns true of there are any open writers
@@ -645,15 +610,15 @@ func (f *File) Fs() fs.Fs {
 
 // Open a file according to the flags provided
 //
-//	O_RDONLY open the file read-only.
-//	O_WRONLY open the file write-only.
-//	O_RDWR   open the file read-write.
+//   O_RDONLY open the file read-only.
+//   O_WRONLY open the file write-only.
+//   O_RDWR   open the file read-write.
 //
-//	O_APPEND append data to the file when writing.
-//	O_CREATE create a new file if none exists.
-//	O_EXCL   used with O_CREATE, file must not exist
-//	O_SYNC   open for synchronous I/O.
-//	O_TRUNC  if possible, truncate file when opened
+//   O_APPEND append data to the file when writing.
+//   O_CREATE create a new file if none exists.
+//   O_EXCL   used with O_CREATE, file must not exist
+//   O_SYNC   open for synchronous I/O.
+//   O_TRUNC  if possible, truncate file when opened
 //
 // We ignore O_SYNC and O_EXCL
 func (f *File) Open(flags int) (fd Handle, err error) {
@@ -695,11 +660,6 @@ func (f *File) Open(flags int) (fd Handle, err error) {
 
 	// If truncate is set then set write to force openRW
 	if flags&os.O_TRUNC != 0 {
-		write = true
-	}
-
-	// If create is set then set write to force openRW
-	if flags&os.O_CREATE != 0 {
 		write = true
 	}
 
@@ -750,30 +710,20 @@ func (f *File) Truncate(size int64) (err error) {
 	f.mu.Lock()
 	writers := make([]Handle, len(f.writers))
 	copy(writers, f.writers)
+	o := f.o
 	f.mu.Unlock()
+
+	// FIXME: handle closing writer
 
 	// If have writers then call truncate for each writer
 	if len(writers) != 0 {
-		var openWriters = len(writers)
 		fs.Debugf(f.Path(), "Truncating %d file handles", len(writers))
 		for _, h := range writers {
 			truncateErr := h.Truncate(size)
-			if truncateErr == ECLOSED {
-				// Ignore ECLOSED since file handle can get closed while this is running
-				openWriters--
-			} else if truncateErr != nil {
+			if truncateErr != nil {
 				err = truncateErr
 			}
 		}
-		// If at least one open writer return here
-		if openWriters > 0 {
-			return err
-		}
-	}
-
-	// if o is nil it isn't valid yet
-	o, err := f.waitForValidObject()
-	if err != nil {
 		return err
 	}
 

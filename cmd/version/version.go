@@ -1,15 +1,14 @@
-// Package version provides the version command.
 package version
 
 import (
-	"errors"
 	"fmt"
-	"io"
+	"io/ioutil"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/coreos/go-semver/semver"
+	"github.com/pkg/errors"
 	"github.com/rclone/rclone/cmd"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/config/flags"
@@ -23,31 +22,21 @@ var (
 func init() {
 	cmd.Root.AddCommand(commandDefinition)
 	cmdFlags := commandDefinition.Flags()
-	flags.BoolVarP(cmdFlags, &check, "check", "", false, "Check for new version")
+	flags.BoolVarP(cmdFlags, &check, "check", "", false, "Check for new version.")
 }
 
 var commandDefinition = &cobra.Command{
 	Use:   "version",
 	Short: `Show the version number.`,
 	Long: `
-Show the rclone version number, the go version, the build target
-OS and architecture, the runtime OS and kernel version and bitness,
-build tags and the type of executable (static or dynamic).
+Show the version number, the go version and the architecture.
 
-For example:
+Eg
 
     $ rclone version
-    rclone v1.55.0
-    - os/version: ubuntu 18.04 (64 bit)
-    - os/kernel: 4.15.0-136-generic (x86_64)
-    - os/type: linux
-    - os/arch: amd64
-    - go/version: go1.16
-    - go/linking: static
-    - go/tags: none
-
-Note: before rclone version 1.55 the os/type and os/arch lines were merged,
-      and the "go/version" line was tagged as "go version".
+    rclone v1.41
+    - os/arch: linux/amd64
+    - go version: go1.10
 
 If you supply the --check flag, then it will do an online check to
 compare your version with the latest release and the latest beta.
@@ -67,13 +56,10 @@ Or
       upgrade: https://beta.rclone.org/v1.42-005-g56e1e820
 
 `,
-	Annotations: map[string]string{
-		"versionIntroduced": "v1.33",
-	},
 	Run: func(command *cobra.Command, args []string) {
 		cmd.CheckArgs(0, 0, command, args)
 		if check {
-			CheckVersion()
+			checkVersion()
 		} else {
 			cmd.ShowVersion()
 		}
@@ -88,8 +74,8 @@ func stripV(s string) string {
 	return s
 }
 
-// GetVersion gets the version available for download
-func GetVersion(url string) (v *semver.Version, vs string, date time.Time, err error) {
+// getVersion gets the version by checking the download repository passed in
+func getVersion(url string) (v *semver.Version, vs string, date time.Time, err error) {
 	resp, err := http.Get(url)
 	if err != nil {
 		return v, vs, date, err
@@ -98,12 +84,14 @@ func GetVersion(url string) (v *semver.Version, vs string, date time.Time, err e
 	if resp.StatusCode != http.StatusOK {
 		return v, vs, date, errors.New(resp.Status)
 	}
-	bodyBytes, err := io.ReadAll(resp.Body)
+	bodyBytes, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return v, vs, date, err
 	}
 	vs = strings.TrimSpace(string(bodyBytes))
-	vs = strings.TrimPrefix(vs, "rclone ")
+	if strings.HasPrefix(vs, "rclone ") {
+		vs = vs[7:]
+	}
 	vs = strings.TrimRight(vs, "β")
 	date, err = http.ParseTime(resp.Header.Get("Last-Modified"))
 	if err != nil {
@@ -113,8 +101,9 @@ func GetVersion(url string) (v *semver.Version, vs string, date time.Time, err e
 	return v, vs, date, err
 }
 
-// CheckVersion checks the installed version against available downloads
-func CheckVersion() {
+// check the current version against available versions
+func checkVersion() {
+	// Get Current version
 	vCurrent, err := semver.NewVersion(stripV(fs.Version))
 	if err != nil {
 		fs.Errorf(nil, "Failed to parse version: %v", err)
@@ -122,7 +111,7 @@ func CheckVersion() {
 	const timeFormat = "2006-01-02"
 
 	printVersion := func(what, url string) {
-		v, vs, t, err := GetVersion(url + "version.txt")
+		v, vs, t, err := getVersion(url + "version.txt")
 		if err != nil {
 			fs.Errorf(nil, "Failed to get rclone %s version: %v", what, err)
 			return

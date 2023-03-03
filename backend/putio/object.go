@@ -2,7 +2,6 @@ package putio
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -10,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/putdotio/go-putio/putio"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/fserrors"
@@ -82,7 +82,7 @@ func (o *Object) Hash(ctx context.Context, t hash.Type) (string, error) {
 	}
 	err := o.readEntryAndSetMetadata(ctx)
 	if err != nil {
-		return "", fmt.Errorf("failed to read hash from metadata: %w", err)
+		return "", errors.Wrap(err, "failed to read hash from metadata")
 	}
 	return o.file.CRC32, nil
 }
@@ -145,13 +145,13 @@ func (o *Object) readEntry(ctx context.Context) (f *putio.File, err error) {
 		if perr, ok := err.(*putio.ErrorResponse); ok && perr.Response.StatusCode == 404 {
 			return false, fs.ErrorObjectNotFound
 		}
-		return shouldRetry(ctx, err)
+		return shouldRetry(err)
 	})
 	if err != nil {
 		return nil, err
 	}
 	if resp.File.IsDir() {
-		return nil, fs.ErrorIsDir
+		return nil, fs.ErrorNotAFile
 	}
 	return &resp.File, err
 }
@@ -220,7 +220,7 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (in io.Read
 	var storageURL string
 	err = o.fs.pacer.Call(func() (bool, error) {
 		storageURL, err = o.fs.client.Files.URL(ctx, o.file.ID, true)
-		return shouldRetry(ctx, err)
+		return shouldRetry(err)
 	})
 	if err != nil {
 		return
@@ -229,10 +229,11 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (in io.Read
 	var resp *http.Response
 	headers := fs.OpenOptionHeaders(options)
 	err = o.fs.pacer.Call(func() (bool, error) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, storageURL, nil)
+		req, err := http.NewRequest(http.MethodGet, storageURL, nil)
 		if err != nil {
-			return shouldRetry(ctx, err)
+			return shouldRetry(err)
 		}
+		req = req.WithContext(ctx) // go1.13 can use NewRequestWithContext
 		req.Header.Set("User-Agent", o.fs.client.UserAgent)
 
 		// merge headers with extra headers
@@ -241,13 +242,7 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (in io.Read
 		}
 		// fs.Debugf(o, "opening file: id=%d", o.file.ID)
 		resp, err = o.fs.httpClient.Do(req)
-		if err != nil {
-			return shouldRetry(ctx, err)
-		}
-		if err := checkStatusCode(resp, 200, 206); err != nil {
-			return shouldRetry(ctx, err)
-		}
-		return false, nil
+		return shouldRetry(err)
 	})
 	if perr, ok := err.(*putio.ErrorResponse); ok && perr.Response.StatusCode >= 400 && perr.Response.StatusCode <= 499 {
 		_ = resp.Body.Close()
@@ -261,7 +256,7 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (in io.Read
 
 // Update the already existing object
 //
-// Copy the reader into the object updating modTime and size.
+// Copy the reader into the object updating modTime and size
 //
 // The new object may have been created if an error is returned
 func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (err error) {
@@ -289,6 +284,6 @@ func (o *Object) Remove(ctx context.Context) (err error) {
 	return o.fs.pacer.Call(func() (bool, error) {
 		// fs.Debugf(o, "removing file: id=%d", o.file.ID)
 		err = o.fs.client.Files.Delete(ctx, o.file.ID)
-		return shouldRetry(ctx, err)
+		return shouldRetry(err)
 	})
 }
