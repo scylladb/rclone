@@ -7,6 +7,7 @@ import (
 	_ "github.com/rclone/rclone/backend/local"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/config"
+	"github.com/rclone/rclone/fs/config/configfile"
 	"github.com/rclone/rclone/fs/config/obscure"
 	"github.com/rclone/rclone/fs/rc"
 	"github.com/stretchr/testify/assert"
@@ -16,6 +17,8 @@ import (
 const testName = "configTestNameForRc"
 
 func TestRc(t *testing.T) {
+	ctx := context.Background()
+	configfile.Install()
 	// Create the test remote
 	call := rc.Calls.Get("config/create")
 	assert.NotNil(t, call)
@@ -26,7 +29,7 @@ func TestRc(t *testing.T) {
 			"test_key": "sausage",
 		},
 	}
-	out, err := call.Fn(context.Background(), in)
+	out, err := call.Fn(ctx, in)
 	require.NoError(t, err)
 	require.Nil(t, out)
 	assert.Equal(t, "local", config.FileGet(testName, "type"))
@@ -149,4 +152,22 @@ func TestRcProviders(t *testing.T) {
 		}
 	}
 	assert.True(t, foundLocal, "didn't find local provider")
+}
+
+func TestRcSetPath(t *testing.T) {
+	oldPath := config.GetConfigPath()
+	newPath := oldPath + ".newPath"
+	call := rc.Calls.Get("config/setpath")
+	assert.NotNil(t, call)
+	in := rc.Params{
+		"path": newPath,
+	}
+	_, err := call.Fn(context.Background(), in)
+	require.NoError(t, err)
+	assert.Equal(t, newPath, config.GetConfigPath())
+
+	in["path"] = oldPath
+	_, err = call.Fn(context.Background(), in)
+	require.NoError(t, err)
+	assert.Equal(t, oldPath, config.GetConfigPath())
 }

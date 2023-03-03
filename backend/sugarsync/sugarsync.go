@@ -14,9 +14,9 @@ To work around this we use the remote "TestSugarSync:Test" to test with.
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"path"
@@ -26,7 +26,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pkg/errors"
 	"github.com/rclone/rclone/backend/sugarsync/api"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/config"
@@ -76,50 +75,63 @@ func init() {
 		Name:        "sugarsync",
 		Description: "Sugarsync",
 		NewFs:       NewFs,
-		Config: func(ctx context.Context, name string, m configmap.Mapper) {
+		Config: func(ctx context.Context, name string, m configmap.Mapper, config fs.ConfigIn) (*fs.ConfigOut, error) {
 			opt := new(Options)
 			err := configstruct.Set(m, opt)
 			if err != nil {
-				log.Fatalf("Failed to read options: %v", err)
+				return nil, fmt.Errorf("failed to read options: %w", err)
 			}
 
-			if opt.RefreshToken != "" {
-				fmt.Printf("Already have a token - refresh?\n")
-				if !config.ConfirmWithConfig(ctx, m, "config_refresh_token", true) {
-					return
+			switch config.State {
+			case "":
+				if opt.RefreshToken == "" {
+					return fs.ConfigGoto("username")
 				}
-			}
-			fmt.Printf("Username (email address)> ")
-			username := config.ReadLine()
-			password := config.GetPassword("Your Sugarsync password is only required during setup and will not be stored.")
+				return fs.ConfigConfirm("refresh", true, "config_refresh", "Already have a token - refresh?")
+			case "refresh":
+				if config.Result == "false" {
+					return nil, nil
+				}
+				return fs.ConfigGoto("username")
+			case "username":
+				return fs.ConfigInput("password", "config_username", "username (email address)")
+			case "password":
+				m.Set("username", config.Result)
+				return fs.ConfigPassword("auth", "config_password", "Your Sugarsync password.\n\nOnly required during setup and will not be stored.")
+			case "auth":
+				username, _ := m.Get("username")
+				m.Set("username", "")
+				password := config.Result
 
-			authRequest := api.AppAuthorization{
-				Username:         username,
-				Password:         password,
-				Application:      withDefault(opt.AppID, appID),
-				AccessKeyID:      withDefault(opt.AccessKeyID, accessKeyID),
-				PrivateAccessKey: withDefault(opt.PrivateAccessKey, obscure.MustReveal(encryptedPrivateAccessKey)),
-			}
+				authRequest := api.AppAuthorization{
+					Username:         username,
+					Password:         obscure.MustReveal(password),
+					Application:      withDefault(opt.AppID, appID),
+					AccessKeyID:      withDefault(opt.AccessKeyID, accessKeyID),
+					PrivateAccessKey: withDefault(opt.PrivateAccessKey, obscure.MustReveal(encryptedPrivateAccessKey)),
+				}
 
-			var resp *http.Response
-			opts := rest.Opts{
-				Method: "POST",
-				Path:   "/app-authorization",
-			}
-			srv := rest.NewClient(fshttp.NewClient(ctx)).SetRoot(rootURL) //  FIXME
+				var resp *http.Response
+				opts := rest.Opts{
+					Method: "POST",
+					Path:   "/app-authorization",
+				}
+				srv := rest.NewClient(fshttp.NewClient(ctx)).SetRoot(rootURL) //  FIXME
 
-			// FIXME
-			//err = f.pacer.Call(func() (bool, error) {
-			resp, err = srv.CallXML(context.Background(), &opts, &authRequest, nil)
-			//	return shouldRetry(resp, err)
-			//})
-			if err != nil {
-				log.Fatalf("Failed to get token: %v", err)
+				// FIXME
+				//err = f.pacer.Call(func() (bool, error) {
+				resp, err = srv.CallXML(context.Background(), &opts, &authRequest, nil)
+				//	return shouldRetry(ctx, resp, err)
+				//})
+				if err != nil {
+					return nil, fmt.Errorf("failed to get token: %w", err)
+				}
+				opt.RefreshToken = resp.Header.Get("Location")
+				m.Set("refresh_token", opt.RefreshToken)
+				return nil, nil
 			}
-			opt.RefreshToken = resp.Header.Get("Location")
-			m.Set("refresh_token", opt.RefreshToken)
-		},
-		Options: []fs.Option{{
+			return nil, fmt.Errorf("unknown state %q", config.State)
+		}, Options: []fs.Option{{
 			Name: "app_id",
 			Help: "Sugarsync App ID.\n\nLeave blank to use rclone's.",
 		}, {
@@ -127,34 +139,34 @@ func init() {
 			Help: "Sugarsync Access Key ID.\n\nLeave blank to use rclone's.",
 		}, {
 			Name: "private_access_key",
-			Help: "Sugarsync Private Access Key\n\nLeave blank to use rclone's.",
+			Help: "Sugarsync Private Access Key.\n\nLeave blank to use rclone's.",
 		}, {
 			Name:    "hard_delete",
 			Help:    "Permanently delete files if true\notherwise put them in the deleted files.",
 			Default: false,
 		}, {
 			Name:     "refresh_token",
-			Help:     "Sugarsync refresh token\n\nLeave blank normally, will be auto configured by rclone.",
+			Help:     "Sugarsync refresh token.\n\nLeave blank normally, will be auto configured by rclone.",
 			Advanced: true,
 		}, {
 			Name:     "authorization",
-			Help:     "Sugarsync authorization\n\nLeave blank normally, will be auto configured by rclone.",
+			Help:     "Sugarsync authorization.\n\nLeave blank normally, will be auto configured by rclone.",
 			Advanced: true,
 		}, {
 			Name:     "authorization_expiry",
-			Help:     "Sugarsync authorization expiry\n\nLeave blank normally, will be auto configured by rclone.",
+			Help:     "Sugarsync authorization expiry.\n\nLeave blank normally, will be auto configured by rclone.",
 			Advanced: true,
 		}, {
 			Name:     "user",
-			Help:     "Sugarsync user\n\nLeave blank normally, will be auto configured by rclone.",
+			Help:     "Sugarsync user.\n\nLeave blank normally, will be auto configured by rclone.",
 			Advanced: true,
 		}, {
 			Name:     "root_id",
-			Help:     "Sugarsync root id\n\nLeave blank normally, will be auto configured by rclone.",
+			Help:     "Sugarsync root id.\n\nLeave blank normally, will be auto configured by rclone.",
 			Advanced: true,
 		}, {
 			Name:     "deleted_id",
-			Help:     "Sugarsync deleted folder id\n\nLeave blank normally, will be auto configured by rclone.",
+			Help:     "Sugarsync deleted folder id.\n\nLeave blank normally, will be auto configured by rclone.",
 			Advanced: true,
 		}, {
 			Name:     config.ConfigEncoding,
@@ -188,7 +200,7 @@ type Fs struct {
 	root       string             // the path we are working on
 	opt        Options            // parsed options
 	features   *fs.Features       // optional features
-	srv        *rest.Client       // the connection to the one drive server
+	srv        *rest.Client       // the connection to the server
 	dirCache   *dircache.DirCache // Map of directory path to directory id
 	pacer      *fs.Pacer          // pacer for API calls
 	m          configmap.Mapper   // config file access
@@ -248,7 +260,10 @@ var retryErrorCodes = []int{
 
 // shouldRetry returns a boolean as to whether this resp and err
 // deserve to be retried.  It returns the err as a convenience
-func shouldRetry(resp *http.Response, err error) (bool, error) {
+func shouldRetry(ctx context.Context, resp *http.Response, err error) (bool, error) {
+	if fserrors.ContextError(ctx, &err) {
+		return false, err
+	}
 	return fserrors.ShouldRetry(err) || fserrors.ShouldRetryHTTP(resp, retryErrorCodes), err
 }
 
@@ -264,7 +279,7 @@ func (f *Fs) readMetaDataForPath(ctx context.Context, path string) (info *api.Fi
 	}
 
 	found, err := f.listAll(ctx, directoryID, func(item *api.File) bool {
-		if item.Name == leaf {
+		if strings.EqualFold(item.Name, leaf) {
 			info = item
 			return true
 		}
@@ -288,13 +303,13 @@ func (f *Fs) readMetaDataForID(ctx context.Context, ID string) (info *api.File, 
 	}
 	err = f.pacer.Call(func() (bool, error) {
 		resp, err = f.srv.CallXML(ctx, &opts, nil, &info)
-		return shouldRetry(resp, err)
+		return shouldRetry(ctx, resp, err)
 	})
 	if err != nil {
 		if resp != nil && resp.StatusCode == http.StatusNotFound {
 			return nil, fs.ErrorObjectNotFound
 		}
-		return nil, errors.Wrap(err, "failed to get authorization")
+		return nil, fmt.Errorf("failed to get authorization: %w", err)
 	}
 	return info, nil
 }
@@ -325,10 +340,10 @@ func (f *Fs) getAuthToken(ctx context.Context) error {
 	}
 	err = f.pacer.Call(func() (bool, error) {
 		resp, err = f.srv.CallXML(ctx, &opts, &authRequest, &authResponse)
-		return shouldRetry(resp, err)
+		return shouldRetry(ctx, resp, err)
 	})
 	if err != nil {
-		return errors.Wrap(err, "failed to get authorization")
+		return fmt.Errorf("failed to get authorization: %w", err)
 	}
 	f.opt.Authorization = resp.Header.Get("Location")
 	f.authExpiry = authResponse.Expiration
@@ -373,10 +388,10 @@ func (f *Fs) getUser(ctx context.Context) (user *api.User, err error) {
 	}
 	err = f.pacer.Call(func() (bool, error) {
 		resp, err = f.srv.CallXML(ctx, &opts, nil, &user)
-		return shouldRetry(resp, err)
+		return shouldRetry(ctx, resp, err)
 	})
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to get user")
+		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
 	return user, nil
 }
@@ -430,7 +445,7 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 		if strings.HasSuffix(f.opt.RootID, "/contents") {
 			f.opt.RootID = f.opt.RootID[:len(f.opt.RootID)-9]
 		} else {
-			return nil, errors.Errorf("unexpected rootID %q", f.opt.RootID)
+			return nil, fmt.Errorf("unexpected rootID %q", f.opt.RootID)
 		}
 		// Cache the results
 		f.m.Set("root_id", f.opt.RootID)
@@ -482,13 +497,13 @@ var findError = regexp.MustCompile(`<h3>(.*?)</h3>`)
 func errorHandler(resp *http.Response) (err error) {
 	body, err := rest.ReadBody(resp)
 	if err != nil {
-		return errors.Wrap(err, "error reading error out of body")
+		return fmt.Errorf("error reading error out of body: %w", err)
 	}
 	match := findError.FindSubmatch(body)
 	if match == nil || len(match) < 2 || len(match[1]) == 0 {
-		return errors.Errorf("HTTP error %v (%v) returned body: %q", resp.StatusCode, resp.Status, body)
+		return fmt.Errorf("HTTP error %v (%v) returned body: %q", resp.StatusCode, resp.Status, body)
 	}
-	return errors.Errorf("HTTP error %v (%v): %s", resp.StatusCode, resp.Status, match[1])
+	return fmt.Errorf("HTTP error %v (%v): %s", resp.StatusCode, resp.Status, match[1])
 }
 
 // rootSlash returns root with a slash on if it is empty, otherwise empty string
@@ -531,7 +546,7 @@ func (f *Fs) FindLeaf(ctx context.Context, pathID, leaf string) (pathIDOut strin
 	//fs.Debugf(f, "FindLeaf(%q, %q)", pathID, leaf)
 	// Find the leaf in pathID
 	found, err = f.listAll(ctx, pathID, nil, func(item *api.Collection) bool {
-		if item.Name == leaf {
+		if strings.EqualFold(item.Name, leaf) {
 			pathIDOut = item.Ref
 			return true
 		}
@@ -567,7 +582,7 @@ func (f *Fs) CreateDir(ctx context.Context, pathID, leaf string) (newID string, 
 	}
 	err = f.pacer.Call(func() (bool, error) {
 		resp, err = f.srv.CallXML(ctx, &opts, mkdir, nil)
-		return shouldRetry(resp, err)
+		return shouldRetry(ctx, resp, err)
 	})
 	if err != nil {
 		return "", err
@@ -581,7 +596,7 @@ func (f *Fs) CreateDir(ctx context.Context, pathID, leaf string) (newID string, 
 			return "", err
 		}
 		if !found {
-			return "", errors.Errorf("couldn't find ID for newly created directory %q", leaf)
+			return "", fmt.Errorf("couldn't find ID for newly created directory %q", leaf)
 		}
 
 	}
@@ -618,10 +633,10 @@ OUTER:
 		var resp *http.Response
 		err = f.pacer.Call(func() (bool, error) {
 			resp, err = f.srv.CallXML(ctx, &opts, nil, &result)
-			return shouldRetry(resp, err)
+			return shouldRetry(ctx, resp, err)
 		})
 		if err != nil {
-			return found, errors.Wrap(err, "couldn't list files")
+			return found, fmt.Errorf("couldn't list files: %w", err)
 		}
 		if fileFn != nil {
 			for i := range result.Files {
@@ -698,7 +713,7 @@ func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err e
 // Creates from the parameters passed in a half finished Object which
 // must have setMetaData called on it
 //
-// Returns the object, leaf, directoryID and error
+// Returns the object, leaf, directoryID and error.
 //
 // Used to create new objects
 func (f *Fs) createObject(ctx context.Context, remote string, modTime time.Time, size int64) (o *Object, leaf string, directoryID string, err error) {
@@ -717,7 +732,7 @@ func (f *Fs) createObject(ctx context.Context, remote string, modTime time.Time,
 
 // Put the object
 //
-// Copy the reader in to the new object which is returned
+// Copy the reader in to the new object which is returned.
 //
 // The new object may have been created if an error is returned
 func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (fs.Object, error) {
@@ -740,9 +755,9 @@ func (f *Fs) PutStream(ctx context.Context, in io.Reader, src fs.ObjectInfo, opt
 
 // PutUnchecked the object into the container
 //
-// This will produce an error if the object already exists
+// This will produce an error if the object already exists.
 //
-// Copy the reader in to the new object which is returned
+// Copy the reader in to the new object which is returned.
 //
 // The new object may have been created if an error is returned
 func (f *Fs) PutUnchecked(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (fs.Object, error) {
@@ -774,7 +789,7 @@ func (f *Fs) delete(ctx context.Context, isFile bool, id string, remote string, 
 		}
 		return f.pacer.Call(func() (bool, error) {
 			resp, err := f.srv.Call(ctx, &opts)
-			return shouldRetry(resp, err)
+			return shouldRetry(ctx, resp, err)
 		})
 	}
 	// Move file/dir to deleted files if not hard delete
@@ -837,9 +852,9 @@ func (f *Fs) Precision() time.Duration {
 
 // Copy src to this remote using server-side copy operations.
 //
-// This is stored with the remote path given
+// This is stored with the remote path given.
 //
-// It returns the destination Object and a possible error
+// It returns the destination Object and a possible error.
 //
 // Will only be called if src.Fs().Name() == f.Name()
 //
@@ -857,8 +872,8 @@ func (f *Fs) Copy(ctx context.Context, src fs.Object, remote string) (fs.Object,
 
 	srcPath := srcObj.fs.rootSlash() + srcObj.remote
 	dstPath := f.rootSlash() + remote
-	if strings.ToLower(srcPath) == strings.ToLower(dstPath) {
-		return nil, errors.Errorf("can't copy %q -> %q as are same name when lowercase", srcPath, dstPath)
+	if strings.EqualFold(srcPath, dstPath) {
+		return nil, fmt.Errorf("can't copy %q -> %q as are same name when lowercase", srcPath, dstPath)
 	}
 
 	// Create temporary object
@@ -880,7 +895,7 @@ func (f *Fs) Copy(ctx context.Context, src fs.Object, remote string) (fs.Object,
 	var resp *http.Response
 	err = f.pacer.Call(func() (bool, error) {
 		resp, err = f.srv.CallXML(ctx, &opts, &copyFile, nil)
-		return shouldRetry(resp, err)
+		return shouldRetry(ctx, resp, err)
 	})
 	if err != nil {
 		return nil, err
@@ -934,7 +949,7 @@ func (f *Fs) moveFile(ctx context.Context, id, leaf, directoryID string) (info *
 	var resp *http.Response
 	err = f.pacer.Call(func() (bool, error) {
 		resp, err = f.srv.CallXML(ctx, &opts, &move, &info)
-		return shouldRetry(resp, err)
+		return shouldRetry(ctx, resp, err)
 	})
 	if err != nil {
 		return nil, err
@@ -964,15 +979,15 @@ func (f *Fs) moveDir(ctx context.Context, id, leaf, directoryID string) (err err
 	var resp *http.Response
 	return f.pacer.Call(func() (bool, error) {
 		resp, err = f.srv.CallXML(ctx, &opts, &move, nil)
-		return shouldRetry(resp, err)
+		return shouldRetry(ctx, resp, err)
 	})
 }
 
 // Move src to this remote using server-side move operations.
 //
-// This is stored with the remote path given
+// This is stored with the remote path given.
 //
-// It returns the destination Object and a possible error
+// It returns the destination Object and a possible error.
 //
 // Will only be called if src.Fs().Name() == f.Name()
 //
@@ -1053,7 +1068,7 @@ func (f *Fs) PublicLink(ctx context.Context, remote string, expire fs.Duration, 
 	var info *api.File
 	err = f.pacer.Call(func() (bool, error) {
 		resp, err = f.srv.CallXML(ctx, &opts, &linkFile, &info)
-		return shouldRetry(resp, err)
+		return shouldRetry(ctx, resp, err)
 	})
 	if err != nil {
 		return "", err
@@ -1141,7 +1156,6 @@ func (o *Object) readMetaData(ctx context.Context) (err error) {
 
 // ModTime returns the modification time of the object
 //
-//
 // It attempts to read the objects mtime and if that isn't present the
 // LastModified returned in the http headers
 func (o *Object) ModTime(ctx context.Context) time.Time {
@@ -1182,7 +1196,7 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (in io.Read
 	}
 	err = o.fs.pacer.Call(func() (bool, error) {
 		resp, err = o.fs.srv.Call(ctx, &opts)
-		return shouldRetry(resp, err)
+		return shouldRetry(ctx, resp, err)
 	})
 	if err != nil {
 		return nil, err
@@ -1204,7 +1218,7 @@ func (f *Fs) createFile(ctx context.Context, pathID, leaf, mimeType string) (new
 	}
 	err = f.pacer.Call(func() (bool, error) {
 		resp, err = f.srv.CallXML(ctx, &opts, &mkdir, nil)
-		return shouldRetry(resp, err)
+		return shouldRetry(ctx, resp, err)
 	})
 	if err != nil {
 		return "", err
@@ -1214,7 +1228,7 @@ func (f *Fs) createFile(ctx context.Context, pathID, leaf, mimeType string) (new
 
 // Update the object with the contents of the io.Reader, modTime and size
 //
-// If existing is set then it updates the object rather than creating a new one
+// If existing is set then it updates the object rather than creating a new one.
 //
 // The new object may have been created if an error is returned
 func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (err error) {
@@ -1232,7 +1246,7 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 	if o.id == "" {
 		o.id, err = o.fs.createFile(ctx, directoryID, leaf, fs.MimeType(ctx, src))
 		if err != nil {
-			return errors.Wrap(err, "failed to create file")
+			return fmt.Errorf("failed to create file: %w", err)
 		}
 		if o.id == "" {
 			return errors.New("failed to create file: no ID")
@@ -1262,10 +1276,10 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 	}
 	err = o.fs.pacer.CallNoRetry(func() (bool, error) {
 		resp, err = o.fs.srv.Call(ctx, &opts)
-		return shouldRetry(resp, err)
+		return shouldRetry(ctx, resp, err)
 	})
 	if err != nil {
-		return errors.Wrap(err, "failed to upload file")
+		return fmt.Errorf("failed to upload file: %w", err)
 	}
 
 	o.hasMetaData = false

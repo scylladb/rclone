@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"math"
 	"math/rand"
@@ -112,7 +111,7 @@ func (t *Test) errorf(format string, a ...interface{}) {
 // list test
 func (t *Test) list() {
 	t.logf("list")
-	fis, err := ioutil.ReadDir(t.dir)
+	fis, err := os.ReadDir(t.dir)
 	if err != nil {
 		t.errorf("%s: failed to read directory: %v", t.dir, err)
 		return
@@ -296,7 +295,7 @@ func main() {
 		log.Fatalf("%s: Syntax [opts] <directory>", os.Args[0])
 	}
 	dir := args[0]
-	_ = os.MkdirAll(dir, 0777)
+	_ = file.MkdirAll(dir, 0777)
 
 	var (
 		wg   sync.WaitGroup

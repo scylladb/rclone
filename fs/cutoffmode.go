@@ -3,8 +3,6 @@ package fs
 import (
 	"fmt"
 	"strings"
-
-	"github.com/pkg/errors"
 )
 
 // CutoffMode describes the possible delete modes in the config
@@ -40,10 +38,21 @@ func (m *CutoffMode) Set(s string) error {
 			return nil
 		}
 	}
-	return errors.Errorf("Unknown cutoff mode %q", s)
+	return fmt.Errorf("unknown cutoff mode %q", s)
 }
 
 // Type of the value
 func (m *CutoffMode) Type() string {
 	return "string"
+}
+
+// UnmarshalJSON makes sure the value can be parsed as a string or integer in JSON
+func (m *CutoffMode) UnmarshalJSON(in []byte) error {
+	return UnmarshalJSONFlag(in, m, func(i int64) error {
+		if i < 0 || i >= int64(len(cutoffModeToString)) {
+			return fmt.Errorf("out of range cutoff mode %d", i)
+		}
+		*m = (CutoffMode)(i)
+		return nil
+	})
 }

@@ -1,13 +1,10 @@
-// Build for mount for unsupported platforms to stop go complaining
-// about "no buildable Go source files "
+//go:build !linux && !freebsd
+// +build !linux,!freebsd
 
-// Invert the build constraint: linux,go1.13 freebsd,go1.13
+// Package mount implements a FUSE mounting system for rclone remotes.
 //
-// !((linux&&go1.13) || (freebsd&&go1.13))
-// == !(linux&&go1.13) && !(freebsd&&go1.13))
-// == (!linux || !go1.13) && (!freebsd || !go1.13))
-
-// +build !linux !go1.13
-// +build !freebsd !go1.13
-
+// Build for mount for unsupported platforms to stop go complaining
+// about "no buildable Go source files".
+//
+// Invert the build constraint: linux freebsd
 package mount

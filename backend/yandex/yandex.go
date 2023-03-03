@@ -1,8 +1,10 @@
+// Package yandex provides an interface to the Yandex storage system.
 package yandex
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -13,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pkg/errors"
 	"github.com/rclone/rclone/backend/yandex/api"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/config"
@@ -30,7 +31,7 @@ import (
 	"golang.org/x/oauth2"
 )
 
-//oAuth
+// oAuth
 const (
 	rcloneClientID              = "ac39b43b9eba4cae8ffb788c06d816a8"
 	rcloneEncryptedClientSecret = "EfyyNZ3YUEwXM5yAhi72G9YwKn2mkFrYwJNS7cY0TJAhFlX9K-uJFbGlpO-RYjrJ"
@@ -60,14 +61,17 @@ func init() {
 		Name:        "yandex",
 		Description: "Yandex Disk",
 		NewFs:       NewFs,
-		Config: func(ctx context.Context, name string, m configmap.Mapper) {
-			err := oauthutil.Config(ctx, "yandex", name, m, oauthConfig, nil)
-			if err != nil {
-				log.Fatalf("Failed to configure token: %v", err)
-				return
-			}
+		Config: func(ctx context.Context, name string, m configmap.Mapper, config fs.ConfigIn) (*fs.ConfigOut, error) {
+			return oauthutil.ConfigOut("", &oauthutil.Options{
+				OAuth2Config: oauthConfig,
+			})
 		},
 		Options: append(oauthutil.SharedOptions, []fs.Option{{
+			Name:     "hard_delete",
+			Help:     "Delete files permanently rather than putting them into the trash.",
+			Default:  false,
+			Advanced: true,
+		}, {
 			Name:     config.ConfigEncoding,
 			Help:     config.ConfigEncodingHelp,
 			Advanced: true,
@@ -81,8 +85,9 @@ func init() {
 
 // Options defines the configuration for this backend
 type Options struct {
-	Token string               `config:"token"`
-	Enc   encoder.MultiEncoder `config:"encoding"`
+	Token      string               `config:"token"`
+	HardDelete bool                 `config:"hard_delete"`
+	Enc        encoder.MultiEncoder `config:"encoding"`
 }
 
 // Fs represents a remote yandex
@@ -153,7 +158,10 @@ var retryErrorCodes = []int{
 
 // shouldRetry returns a boolean as to whether this resp and err
 // deserve to be retried.  It returns the err as a convenience
-func shouldRetry(resp *http.Response, err error) (bool, error) {
+func shouldRetry(ctx context.Context, resp *http.Response, err error) (bool, error) {
+	if fserrors.ContextError(ctx, &err) {
+		return false, err
+	}
 	return fserrors.ShouldRetry(err) || fserrors.ShouldRetryHTTP(resp, retryErrorCodes), err
 }
 
@@ -226,7 +234,7 @@ func (f *Fs) readMetaDataForPath(ctx context.Context, path string, options *api.
 	var resp *http.Response
 	err = f.pacer.Call(func() (bool, error) {
 		resp, err = f.srv.CallJSON(ctx, &opts, nil, &info)
-		return shouldRetry(resp, err)
+		return shouldRetry(ctx, resp, err)
 	})
 
 	if err != nil {
@@ -248,22 +256,22 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 
 	token, err := oauthutil.GetToken(name, m)
 	if err != nil {
-		log.Fatalf("Couldn't read OAuth token (this should never happen).")
+		return nil, fmt.Errorf("couldn't read OAuth token: %w", err)
 	}
 	if token.RefreshToken == "" {
-		log.Fatalf("Unable to get RefreshToken. If you are upgrading from older versions of rclone, please run `rclone config` and re-configure this backend.")
+		return nil, errors.New("unable to get RefreshToken. If you are upgrading from older versions of rclone, please run `rclone config` and re-configure this backend")
 	}
 	if token.TokenType != "OAuth" {
 		token.TokenType = "OAuth"
 		err = oauthutil.PutToken(name, m, token, false)
 		if err != nil {
-			log.Fatalf("Couldn't save OAuth token (this should never happen).")
+			return nil, fmt.Errorf("couldn't save OAuth token: %w", err)
 		}
 		log.Printf("Automatically upgraded OAuth config.")
 	}
 	oAuthClient, _, err := oauthutil.NewClient(ctx, name, m, oauthConfig)
 	if err != nil {
-		log.Fatalf("Failed to configure Yandex: %v", err)
+		return nil, fmt.Errorf("failed to configure Yandex: %w", err)
 	}
 
 	ci := fs.GetConfig(ctx)
@@ -308,7 +316,7 @@ func (f *Fs) itemToDirEntry(ctx context.Context, remote string, object *api.Reso
 	case "dir":
 		t, err := time.Parse(time.RFC3339Nano, object.Modified)
 		if err != nil {
-			return nil, errors.Wrap(err, "error parsing time in directory item")
+			return nil, fmt.Errorf("error parsing time in directory item: %w", err)
 		}
 		d := fs.NewDir(remote, t).SetSize(object.Size)
 		return d, nil
@@ -435,7 +443,7 @@ func (f *Fs) createObject(remote string, modTime time.Time, size int64) (o *Obje
 
 // Put the object
 //
-// Copy the reader in to the new object which is returned
+// Copy the reader in to the new object which is returned.
 //
 // The new object may have been created if an error is returned
 func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (fs.Object, error) {
@@ -461,14 +469,14 @@ func (f *Fs) CreateDir(ctx context.Context, path string) (err error) {
 	}
 
 	// If creating a directory with a : use (undocumented) disk: prefix
-	if strings.IndexRune(path, ':') >= 0 {
+	if strings.ContainsRune(path, ':') {
 		path = "disk:" + path
 	}
 	opts.Parameters.Set("path", f.opt.Enc.FromStandardPath(path))
 
 	err = f.pacer.Call(func() (bool, error) {
 		resp, err = f.srv.Call(ctx, &opts)
-		return shouldRetry(resp, err)
+		return shouldRetry(ctx, resp, err)
 	})
 	if err != nil {
 		// fmt.Printf("CreateDir %q Error: %s\n", path, err.Error())
@@ -499,10 +507,8 @@ func (f *Fs) mkDirs(ctx context.Context, path string) (err error) {
 				var mkdirpath = "/"                   //path separator /
 				for _, element := range dirs {
 					if element != "" {
-						mkdirpath += element + "/" //path separator /
-						if err = f.CreateDir(ctx, mkdirpath); err != nil {
-							// ignore errors while creating dirs
-						}
+						mkdirpath += element + "/"      //path separator /
+						_ = f.CreateDir(ctx, mkdirpath) // ignore errors while creating dirs
 					}
 				}
 			}
@@ -515,10 +521,7 @@ func (f *Fs) mkDirs(ctx context.Context, path string) (err error) {
 func (f *Fs) mkParentDirs(ctx context.Context, resPath string) error {
 	// defer log.Trace(dirPath, "")("")
 	// chop off trailing / if it exists
-	if strings.HasSuffix(resPath, "/") {
-		resPath = resPath[:len(resPath)-1]
-	}
-	parent := path.Dir(resPath)
+	parent := path.Dir(strings.TrimSuffix(resPath, "/"))
 	if parent == "." {
 		parent = ""
 	}
@@ -537,12 +540,15 @@ func (f *Fs) waitForJob(ctx context.Context, location string) (err error) {
 		RootURL: location,
 		Method:  "GET",
 	}
-	deadline := time.Now().Add(f.ci.Timeout)
+	deadline := time.Now().Add(f.ci.TimeoutOrInfinite())
 	for time.Now().Before(deadline) {
 		var resp *http.Response
 		var body []byte
 		err = f.pacer.Call(func() (bool, error) {
 			resp, err = f.srv.Call(ctx, &opts)
+			if fserrors.ContextError(ctx, &err) {
+				return false, err
+			}
 			if err != nil {
 				return fserrors.ShouldRetry(err), err
 			}
@@ -556,19 +562,19 @@ func (f *Fs) waitForJob(ctx context.Context, location string) (err error) {
 		var status api.AsyncStatus
 		err = json.Unmarshal(body, &status)
 		if err != nil {
-			return errors.Wrapf(err, "async status result not JSON: %q", body)
+			return fmt.Errorf("async status result not JSON: %q: %w", body, err)
 		}
 
 		switch status.Status {
 		case "failure":
-			return errors.Errorf("async operation returned %q", status.Status)
+			return fmt.Errorf("async operation returned %q", status.Status)
 		case "success":
 			return nil
 		}
 
 		time.Sleep(1 * time.Second)
 	}
-	return errors.Errorf("async operation didn't complete after %v", f.ci.Timeout)
+	return fmt.Errorf("async operation didn't complete after %v", f.ci.TimeoutOrInfinite())
 }
 
 func (f *Fs) delete(ctx context.Context, path string, hardDelete bool) (err error) {
@@ -585,6 +591,9 @@ func (f *Fs) delete(ctx context.Context, path string, hardDelete bool) (err erro
 	var body []byte
 	err = f.pacer.Call(func() (bool, error) {
 		resp, err = f.srv.Call(ctx, &opts)
+		if fserrors.ContextError(ctx, &err) {
+			return false, err
+		}
 		if err != nil {
 			return fserrors.ShouldRetry(err), err
 		}
@@ -600,7 +609,7 @@ func (f *Fs) delete(ctx context.Context, path string, hardDelete bool) (err erro
 		var info api.AsyncInfo
 		err = json.Unmarshal(body, &info)
 		if err != nil {
-			return errors.Wrapf(err, "async info result not JSON: %q", body)
+			return fmt.Errorf("async info result not JSON: %q: %w", body, err)
 		}
 		return f.waitForJob(ctx, info.HRef)
 	}
@@ -616,14 +625,14 @@ func (f *Fs) purgeCheck(ctx context.Context, dir string, check bool) error {
 		//send request to get list of objects in this directory.
 		info, err := f.readMetaDataForPath(ctx, root, &api.ResourceInfoRequestOptions{})
 		if err != nil {
-			return errors.Wrap(err, "rmdir failed")
+			return fmt.Errorf("rmdir failed: %w", err)
 		}
 		if len(info.Embedded.Items) != 0 {
 			return fs.ErrorDirectoryNotEmpty
 		}
 	}
 	//delete directory
-	return f.delete(ctx, root, false)
+	return f.delete(ctx, root, f.opt.HardDelete)
 }
 
 // Rmdir deletes the container
@@ -658,6 +667,9 @@ func (f *Fs) copyOrMove(ctx context.Context, method, src, dst string, overwrite 
 	var body []byte
 	err = f.pacer.Call(func() (bool, error) {
 		resp, err = f.srv.Call(ctx, &opts)
+		if fserrors.ContextError(ctx, &err) {
+			return false, err
+		}
 		if err != nil {
 			return fserrors.ShouldRetry(err), err
 		}
@@ -673,7 +685,7 @@ func (f *Fs) copyOrMove(ctx context.Context, method, src, dst string, overwrite 
 		var info api.AsyncInfo
 		err = json.Unmarshal(body, &info)
 		if err != nil {
-			return errors.Wrapf(err, "async info result not JSON: %q", body)
+			return fmt.Errorf("async info result not JSON: %q: %w", body, err)
 		}
 		return f.waitForJob(ctx, info.HRef)
 	}
@@ -682,9 +694,9 @@ func (f *Fs) copyOrMove(ctx context.Context, method, src, dst string, overwrite 
 
 // Copy src to this remote using server-side copy operations.
 //
-// This is stored with the remote path given
+// This is stored with the remote path given.
 //
-// It returns the destination Object and a possible error
+// It returns the destination Object and a possible error.
 //
 // Will only be called if src.Fs().Name() == f.Name()
 //
@@ -704,7 +716,7 @@ func (f *Fs) Copy(ctx context.Context, src fs.Object, remote string) (fs.Object,
 	err = f.copyOrMove(ctx, "copy", srcObj.filePath(), dstPath, false)
 
 	if err != nil {
-		return nil, errors.Wrap(err, "couldn't copy file")
+		return nil, fmt.Errorf("couldn't copy file: %w", err)
 	}
 
 	return f.NewObject(ctx, remote)
@@ -712,9 +724,9 @@ func (f *Fs) Copy(ctx context.Context, src fs.Object, remote string) (fs.Object,
 
 // Move src to this remote using server-side move operations.
 //
-// This is stored with the remote path given
+// This is stored with the remote path given.
 //
-// It returns the destination Object and a possible error
+// It returns the destination Object and a possible error.
 //
 // Will only be called if src.Fs().Name() == f.Name()
 //
@@ -734,7 +746,7 @@ func (f *Fs) Move(ctx context.Context, src fs.Object, remote string) (fs.Object,
 	err = f.copyOrMove(ctx, "move", srcObj.filePath(), dstPath, false)
 
 	if err != nil {
-		return nil, errors.Wrap(err, "couldn't move file")
+		return nil, fmt.Errorf("couldn't move file: %w", err)
 	}
 
 	return f.NewObject(ctx, remote)
@@ -772,9 +784,8 @@ func (f *Fs) DirMove(ctx context.Context, src fs.Fs, srcRemote, dstRemote string
 
 	_, err = f.readMetaDataForPath(ctx, dstPath, &api.ResourceInfoRequestOptions{})
 	if apiErr, ok := err.(*api.ErrorResponse); ok {
-		// does not exist
-		if apiErr.ErrorName == "DiskNotFoundError" {
-			// OK
+		if apiErr.ErrorName != "DiskNotFoundError" {
+			return err
 		}
 	} else if err != nil {
 		return err
@@ -785,7 +796,7 @@ func (f *Fs) DirMove(ctx context.Context, src fs.Fs, srcRemote, dstRemote string
 	err = f.copyOrMove(ctx, "move", srcPath, dstPath, false)
 
 	if err != nil {
-		return errors.Wrap(err, "couldn't move directory")
+		return fmt.Errorf("couldn't move directory: %w", err)
 	}
 	return nil
 }
@@ -810,7 +821,7 @@ func (f *Fs) PublicLink(ctx context.Context, remote string, expire fs.Duration, 
 	var resp *http.Response
 	err = f.pacer.Call(func() (bool, error) {
 		resp, err = f.srv.Call(ctx, &opts)
-		return shouldRetry(resp, err)
+		return shouldRetry(ctx, resp, err)
 	})
 
 	if apiErr, ok := err.(*api.ErrorResponse); ok {
@@ -821,9 +832,9 @@ func (f *Fs) PublicLink(ctx context.Context, remote string, expire fs.Duration, 
 	}
 	if err != nil {
 		if unlink {
-			return "", errors.Wrap(err, "couldn't remove public link")
+			return "", fmt.Errorf("couldn't remove public link: %w", err)
 		}
-		return "", errors.Wrap(err, "couldn't create public link")
+		return "", fmt.Errorf("couldn't create public link: %w", err)
 	}
 
 	info, err := f.readMetaDataForPath(ctx, f.filePath(remote), &api.ResourceInfoRequestOptions{})
@@ -848,7 +859,7 @@ func (f *Fs) CleanUp(ctx context.Context) (err error) {
 
 	err = f.pacer.Call(func() (bool, error) {
 		resp, err = f.srv.Call(ctx, &opts)
-		return shouldRetry(resp, err)
+		return shouldRetry(ctx, resp, err)
 	})
 	return err
 }
@@ -865,7 +876,7 @@ func (f *Fs) About(ctx context.Context) (*fs.Usage, error) {
 	var err error
 	err = f.pacer.Call(func() (bool, error) {
 		resp, err = f.srv.CallJSON(ctx, &opts, nil, &info)
-		return shouldRetry(resp, err)
+		return shouldRetry(ctx, resp, err)
 	})
 
 	if err != nil {
@@ -924,7 +935,7 @@ func (o *Object) setMetaData(info *api.ResourceInfoResponse) (err error) {
 	}
 	t, err := time.Parse(time.RFC3339Nano, modTimeString)
 	if err != nil {
-		return errors.Wrapf(err, "failed to parse modtime from %q", modTimeString)
+		return fmt.Errorf("failed to parse modtime from %q: %w", modTimeString, err)
 	}
 	o.modTime = t
 	return nil
@@ -939,7 +950,9 @@ func (o *Object) readMetaData(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
-	if info.ResourceType != "file" {
+	if info.ResourceType == "dir" {
+		return fs.ErrorIsDir
+	} else if info.ResourceType != "file" {
 		return fs.ErrorNotAFile
 	}
 	return o.setMetaData(info)
@@ -999,7 +1012,7 @@ func (o *Object) setCustomProperty(ctx context.Context, property string, value s
 
 	err = o.fs.pacer.Call(func() (bool, error) {
 		resp, err = o.fs.srv.CallJSON(ctx, &opts, &cpr, nil)
-		return shouldRetry(resp, err)
+		return shouldRetry(ctx, resp, err)
 	})
 	return err
 }
@@ -1032,7 +1045,7 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (in io.Read
 
 	err = o.fs.pacer.Call(func() (bool, error) {
 		resp, err = o.fs.srv.CallJSON(ctx, &opts, nil, &dl)
-		return shouldRetry(resp, err)
+		return shouldRetry(ctx, resp, err)
 	})
 
 	if err != nil {
@@ -1047,7 +1060,7 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (in io.Read
 	}
 	err = o.fs.pacer.Call(func() (bool, error) {
 		resp, err = o.fs.srv.Call(ctx, &opts)
-		return shouldRetry(resp, err)
+		return shouldRetry(ctx, resp, err)
 	})
 	if err != nil {
 		return nil, err
@@ -1071,7 +1084,7 @@ func (o *Object) upload(ctx context.Context, in io.Reader, overwrite bool, mimeT
 
 	err = o.fs.pacer.Call(func() (bool, error) {
 		resp, err = o.fs.srv.CallJSON(ctx, &opts, nil, &ur)
-		return shouldRetry(resp, err)
+		return shouldRetry(ctx, resp, err)
 	})
 
 	if err != nil {
@@ -1089,7 +1102,7 @@ func (o *Object) upload(ctx context.Context, in io.Reader, overwrite bool, mimeT
 
 	err = o.fs.pacer.Call(func() (bool, error) {
 		resp, err = o.fs.srv.Call(ctx, &opts)
-		return shouldRetry(resp, err)
+		return shouldRetry(ctx, resp, err)
 	})
 
 	return err
@@ -1097,7 +1110,7 @@ func (o *Object) upload(ctx context.Context, in io.Reader, overwrite bool, mimeT
 
 // Update the already existing object
 //
-// Copy the reader into the object updating modTime and size
+// Copy the reader into the object updating modTime and size.
 //
 // The new object may have been created if an error is returned
 func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) error {
@@ -1129,7 +1142,7 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 
 // Remove an object
 func (o *Object) Remove(ctx context.Context) error {
-	return o.fs.delete(ctx, o.filePath(), false)
+	return o.fs.delete(ctx, o.filePath(), o.fs.opt.HardDelete)
 }
 
 // MimeType of an Object if known, "" otherwise

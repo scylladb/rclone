@@ -13,7 +13,6 @@ import (
 
 func TestCaseSensitivity(t *testing.T) {
 	r := fstest.NewRun(t)
-	defer r.Finalise()
 
 	if r.Fremote.Features().CaseInsensitive {
 		t.Skip("Can't test case sensitivity - this remote is officially not case-sensitive")
@@ -23,7 +22,7 @@ func TestCaseSensitivity(t *testing.T) {
 	ctx := context.Background()
 	file1 := r.WriteObject(ctx, "FiLeA", "data1", t1)
 	file2 := r.WriteObject(ctx, "FiLeB", "data2", t2)
-	fstest.CheckItems(t, r.Fremote, file1, file2)
+	r.CheckRemoteItems(t, file1, file2)
 
 	// Create file3 with name differing from file2 name only by case.
 	// On a case-Sensitive remote this will be a separate file.
@@ -65,7 +64,7 @@ func TestCaseSensitivity(t *testing.T) {
 	}
 
 	// Continue with test as the underlying remote is fully case-Sensitive.
-	fstest.CheckItems(t, r.Fremote, file1, file2, file3)
+	r.CheckRemoteItems(t, file1, file2, file3)
 
 	// See how VFS handles case-INsensitive flag
 	assertFileDataVFS(t, vfsCI, "FiLeA", "data1")

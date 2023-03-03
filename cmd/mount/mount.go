@@ -1,7 +1,7 @@
+//go:build linux || freebsd
+// +build linux freebsd
+
 // Package mount implements a FUSE mounting system for rclone remotes.
-
-// +build linux,go1.13 freebsd,go1.13
-
 package mount
 
 import (
@@ -26,7 +26,6 @@ func mountOptions(VFS *vfs.VFS, device string, opt *mountlib.Options) (options [
 		fuse.MaxReadahead(uint32(opt.MaxReadAhead)),
 		fuse.Subtype("rclone"),
 		fuse.FSName(device),
-		fuse.VolumeName(opt.VolumeName),
 
 		// Options from benchmarking in the fuse module
 		//fuse.MaxReadahead(64 * 1024 * 1024),
@@ -34,15 +33,6 @@ func mountOptions(VFS *vfs.VFS, device string, opt *mountlib.Options) (options [
 	}
 	if opt.AsyncRead {
 		options = append(options, fuse.AsyncRead())
-	}
-	if opt.NoAppleDouble {
-		options = append(options, fuse.NoAppleDouble())
-	}
-	if opt.NoAppleXattr {
-		options = append(options, fuse.NoAppleXattr())
-	}
-	if opt.AllowNonEmpty {
-		options = append(options, fuse.AllowNonEmptyMount())
 	}
 	if opt.AllowOther {
 		options = append(options, fuse.AllowOther())
@@ -79,9 +69,17 @@ func mountOptions(VFS *vfs.VFS, device string, opt *mountlib.Options) (options [
 // returns an error, and an error channel for the serve process to
 // report an error when fusermount is called.
 func mount(VFS *vfs.VFS, mountpoint string, opt *mountlib.Options) (<-chan error, func() error, error) {
+	f := VFS.Fs()
 	if runtime.GOOS == "darwin" {
 		fs.Logf(nil, "macOS users: please try \"rclone cmount\" as it will be the default in v1.54")
 	}
+	if err := mountlib.CheckOverlap(f, mountpoint); err != nil {
+		return nil, nil, err
+	}
+	if err := mountlib.CheckAllowNonEmpty(mountpoint, opt); err != nil {
+		return nil, nil, err
+	}
+	fs.Debugf(f, "Mounting on %q", mountpoint)
 
 	if opt.DebugFUSE {
 		fuse.Debug = func(msg interface{}) {
@@ -89,32 +87,24 @@ func mount(VFS *vfs.VFS, mountpoint string, opt *mountlib.Options) (<-chan error
 		}
 	}
 
-	f := VFS.Fs()
-	fs.Debugf(f, "Mounting on %q", mountpoint)
-	c, err := fuse.Mount(mountpoint, mountOptions(VFS, f.Name()+":"+f.Root(), opt)...)
+	c, err := fuse.Mount(mountpoint, mountOptions(VFS, opt.DeviceName, opt)...)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	filesys := NewFS(VFS, opt)
-	server := fusefs.New(c, nil)
+	filesys.server = fusefs.New(c, nil)
 
 	// Serve the mount point in the background returning error to errChan
 	errChan := make(chan error, 1)
 	go func() {
-		err := server.Serve(filesys)
+		err := filesys.server.Serve(filesys)
 		closeErr := c.Close()
 		if err == nil {
 			err = closeErr
 		}
 		errChan <- err
 	}()
-
-	// check if the mount process has an error to report
-	<-c.Ready
-	if err := c.MountError; err != nil {
-		return nil, nil, err
-	}
 
 	unmount := func() error {
 		// Shutdown the VFS

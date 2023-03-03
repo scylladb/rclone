@@ -5,14 +5,17 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"path"
 	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/rclone/rclone/fs"
+	"github.com/rclone/rclone/fs/config/configmap"
+	"github.com/rclone/rclone/fs/fspath"
 	"github.com/rclone/rclone/fs/hash"
+	"github.com/rclone/rclone/fs/object"
 	"github.com/rclone/rclone/fs/operations"
 	"github.com/rclone/rclone/fstest"
 	"github.com/rclone/rclone/fstest/fstests"
@@ -32,9 +35,33 @@ func testPutLarge(t *testing.T, f *Fs, kilobytes int) {
 		fstests.TestPutLarge(context.Background(), t, f, &fstest.Item{
 			ModTime: fstest.Time("2001-02-03T04:05:06.499999999Z"),
 			Path:    fmt.Sprintf("chunker-upload-%dk", kilobytes),
-			Size:    int64(kilobytes) * int64(fs.KibiByte),
+			Size:    int64(kilobytes) * int64(fs.Kibi),
 		})
 	})
+}
+
+type settings map[string]interface{}
+
+func deriveFs(ctx context.Context, t *testing.T, f fs.Fs, path string, opts settings) fs.Fs {
+	fsName := strings.Split(f.Name(), "{")[0] // strip off hash
+	configMap := configmap.Simple{}
+	for key, val := range opts {
+		configMap[key] = fmt.Sprintf("%v", val)
+	}
+	rpath := fspath.JoinRootPath(f.Root(), path)
+	remote := fmt.Sprintf("%s,%s:%s", fsName, configMap.String(), rpath)
+	fixFs, err := fs.NewFs(ctx, remote)
+	require.NoError(t, err)
+	return fixFs
+}
+
+var mtime1 = fstest.Time("2001-02-03T04:05:06.499999999Z")
+
+func testPutFile(ctx context.Context, t *testing.T, f fs.Fs, name, contents, message string, check bool) fs.Object {
+	item := fstest.Item{Path: name, ModTime: mtime1}
+	obj := fstests.PutTestContents(ctx, t, f, &item, contents, check)
+	assert.NotNil(t, obj, message)
+	return obj
 }
 
 // test chunk name parser
@@ -386,7 +413,7 @@ func testSmallFileInternals(t *testing.T, f *Fs) {
 		if r == nil {
 			return
 		}
-		data, err := ioutil.ReadAll(r)
+		data, err := io.ReadAll(r)
 		assert.NoError(t, err)
 		assert.Equal(t, contents, string(data))
 		_ = r.Close()
@@ -413,7 +440,7 @@ func testSmallFileInternals(t *testing.T, f *Fs) {
 	checkSmallFile := func(name, contents string) {
 		filename := path.Join(dir, name)
 		item := fstest.Item{Path: filename, ModTime: modTime}
-		_, put := fstests.PutTestContents(ctx, t, f, &item, contents, false)
+		put := fstests.PutTestContents(ctx, t, f, &item, contents, false)
 		assert.NotNil(t, put)
 		checkSmallFileInternals(put)
 		checkContents(put, contents)
@@ -462,14 +489,20 @@ func testPreventCorruption(t *testing.T, f *Fs) {
 
 	newFile := func(name string) fs.Object {
 		item := fstest.Item{Path: path.Join(dir, name), ModTime: modTime}
-		_, obj := fstests.PutTestContents(ctx, t, f, &item, contents, true)
+		obj := fstests.PutTestContents(ctx, t, f, &item, contents, true)
 		require.NotNil(t, obj)
 		return obj
 	}
 	billyObj := newFile("billy")
+	billyTxn := billyObj.(*Object).xactID
+	if f.useNoRename {
+		require.True(t, billyTxn != "")
+	} else {
+		require.True(t, billyTxn == "")
+	}
 
 	billyChunkName := func(chunkNo int) string {
-		return f.makeChunkName(billyObj.Remote(), chunkNo, "", "")
+		return f.makeChunkName(billyObj.Remote(), chunkNo, "", billyTxn)
 	}
 
 	err := f.Mkdir(ctx, billyChunkName(1))
@@ -486,11 +519,13 @@ func testPreventCorruption(t *testing.T, f *Fs) {
 	// accessing chunks in strict mode is prohibited
 	f.opt.FailHard = true
 	billyChunk4Name := billyChunkName(4)
-	billyChunk4, err := f.NewObject(ctx, billyChunk4Name)
+	_, err = f.base.NewObject(ctx, billyChunk4Name)
+	require.NoError(t, err)
+	_, err = f.NewObject(ctx, billyChunk4Name)
 	assertOverlapError(err)
 
 	f.opt.FailHard = false
-	billyChunk4, err = f.NewObject(ctx, billyChunk4Name)
+	billyChunk4, err := f.NewObject(ctx, billyChunk4Name)
 	assert.NoError(t, err)
 	require.NotNil(t, billyChunk4)
 
@@ -503,7 +538,7 @@ func testPreventCorruption(t *testing.T, f *Fs) {
 	assert.NoError(t, err)
 	var chunkContents []byte
 	assert.NotPanics(t, func() {
-		chunkContents, err = ioutil.ReadAll(r)
+		chunkContents, err = io.ReadAll(r)
 		_ = r.Close()
 	})
 	assert.NoError(t, err)
@@ -519,7 +554,8 @@ func testPreventCorruption(t *testing.T, f *Fs) {
 
 	// recreate billy in case it was anyhow corrupted
 	willyObj := newFile("willy")
-	willyChunkName := f.makeChunkName(willyObj.Remote(), 1, "", "")
+	willyTxn := willyObj.(*Object).xactID
+	willyChunkName := f.makeChunkName(willyObj.Remote(), 1, "", willyTxn)
 	f.opt.FailHard = false
 	willyChunk, err := f.NewObject(ctx, willyChunkName)
 	f.opt.FailHard = true
@@ -537,7 +573,7 @@ func testPreventCorruption(t *testing.T, f *Fs) {
 	r, err = willyChunk.Open(ctx)
 	assert.NoError(t, err)
 	assert.NotPanics(t, func() {
-		_, err = ioutil.ReadAll(r)
+		_, err = io.ReadAll(r)
 		_ = r.Close()
 	})
 	assert.NoError(t, err)
@@ -560,17 +596,20 @@ func testChunkNumberOverflow(t *testing.T, f *Fs) {
 	modTime := fstest.Time("2001-02-03T04:05:06.499999999Z")
 	contents := random.String(100)
 
-	newFile := func(f fs.Fs, name string) (fs.Object, string) {
-		filename := path.Join(dir, name)
+	newFile := func(f fs.Fs, name string) (obj fs.Object, filename string, txnID string) {
+		filename = path.Join(dir, name)
 		item := fstest.Item{Path: filename, ModTime: modTime}
-		_, obj := fstests.PutTestContents(ctx, t, f, &item, contents, true)
+		obj = fstests.PutTestContents(ctx, t, f, &item, contents, true)
 		require.NotNil(t, obj)
-		return obj, filename
+		if chunkObj, isChunkObj := obj.(*Object); isChunkObj {
+			txnID = chunkObj.xactID
+		}
+		return
 	}
 
 	f.opt.FailHard = false
-	file, fileName := newFile(f, "wreaker")
-	wreak, _ := newFile(f.base, f.makeChunkName("wreaker", wreakNumber, "", ""))
+	file, fileName, fileTxn := newFile(f, "wreaker")
+	wreak, _, _ := newFile(f.base, f.makeChunkName("wreaker", wreakNumber, "", fileTxn))
 
 	f.opt.FailHard = false
 	fstest.CheckListingWithRoot(t, f, dir, nil, nil, f.Precision())
@@ -604,22 +643,13 @@ func testMetadataInput(t *testing.T, f *Fs) {
 	}()
 	f.opt.FailHard = false
 
-	modTime := fstest.Time("2001-02-03T04:05:06.499999999Z")
-
-	putFile := func(f fs.Fs, name, contents, message string, check bool) fs.Object {
-		item := fstest.Item{Path: name, ModTime: modTime}
-		_, obj := fstests.PutTestContents(ctx, t, f, &item, contents, check)
-		assert.NotNil(t, obj, message)
-		return obj
-	}
-
 	runSubtest := func(contents, name string) {
 		description := fmt.Sprintf("file with %s metadata", name)
 		filename := path.Join(dir, name)
 		require.True(t, len(contents) > 2 && len(contents) < minChunkForTest, description+" test data is correct")
 
-		part := putFile(f.base, f.makeChunkName(filename, 0, "", ""), "oops", "", true)
-		_ = putFile(f, filename, contents, "upload "+description, false)
+		part := testPutFile(ctx, t, f.base, f.makeChunkName(filename, 0, "", ""), "oops", "", true)
+		_ = testPutFile(ctx, t, f, filename, contents, "upload "+description, false)
 
 		obj, err := f.NewObject(ctx, filename)
 		assert.NoError(t, err, "access "+description)
@@ -642,14 +672,14 @@ func testMetadataInput(t *testing.T, f *Fs) {
 		assert.NoError(t, err, "open "+description)
 		assert.NotNil(t, r, "open stream of "+description)
 		if err == nil && r != nil {
-			data, err := ioutil.ReadAll(r)
+			data, err := io.ReadAll(r)
 			assert.NoError(t, err, "read all of "+description)
 			assert.Equal(t, contents, string(data), description+" contents is ok")
 			_ = r.Close()
 		}
 	}
 
-	metaData, err := marshalSimpleJSON(ctx, 3, 1, "", "")
+	metaData, err := marshalSimpleJSON(ctx, 3, 1, "", "", "")
 	require.NoError(t, err)
 	todaysMeta := string(metaData)
 	runSubtest(todaysMeta, "today")
@@ -661,6 +691,212 @@ func testMetadataInput(t *testing.T, f *Fs) {
 	futureMeta := regexp.MustCompile(`"ver":[0-9]+`).ReplaceAllLiteralString(todaysMeta, `"ver":999`)
 	futureMeta = regexp.MustCompile(`"nchunks":[0-9]+`).ReplaceAllLiteralString(futureMeta, `"nchunks":0,"x":"y"`)
 	runSubtest(futureMeta, "future")
+}
+
+// Test that chunker refuses to change on objects with future/unknown metadata
+func testFutureProof(t *testing.T, f *Fs) {
+	if !f.useMeta {
+		t.Skip("this test requires metadata support")
+	}
+
+	saveOpt := f.opt
+	ctx := context.Background()
+	f.opt.FailHard = true
+	const dir = "future"
+	const file = dir + "/test"
+	defer func() {
+		f.opt.FailHard = false
+		_ = operations.Purge(ctx, f.base, dir)
+		f.opt = saveOpt
+	}()
+
+	modTime := fstest.Time("2001-02-03T04:05:06.499999999Z")
+	putPart := func(name string, part int, data, msg string) {
+		if part > 0 {
+			name = f.makeChunkName(name, part-1, "", "")
+		}
+		item := fstest.Item{Path: name, ModTime: modTime}
+		obj := fstests.PutTestContents(ctx, t, f.base, &item, data, true)
+		assert.NotNil(t, obj, msg)
+	}
+
+	// simulate chunked object from future
+	meta := `{"ver":999,"nchunks":3,"size":9,"garbage":"litter","sha1":"0707f2970043f9f7c22029482db27733deaec029"}`
+	putPart(file, 0, meta, "metaobject")
+	putPart(file, 1, "abc", "chunk1")
+	putPart(file, 2, "def", "chunk2")
+	putPart(file, 3, "ghi", "chunk3")
+
+	// List should succeed
+	ls, err := f.List(ctx, dir)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, len(ls))
+	assert.Equal(t, int64(9), ls[0].Size())
+
+	// NewObject should succeed
+	obj, err := f.NewObject(ctx, file)
+	assert.NoError(t, err)
+	assert.Equal(t, file, obj.Remote())
+	assert.Equal(t, int64(9), obj.Size())
+
+	// Hash must fail
+	_, err = obj.Hash(ctx, hash.SHA1)
+	assert.Equal(t, ErrMetaUnknown, err)
+
+	// Move must fail
+	mobj, err := operations.Move(ctx, f, nil, file+"2", obj)
+	assert.Nil(t, mobj)
+	assert.Error(t, err)
+	if err != nil {
+		assert.Contains(t, err.Error(), "please upgrade rclone")
+	}
+
+	// Put must fail
+	oi := object.NewStaticObjectInfo(file, modTime, 3, true, nil, nil)
+	buf := bytes.NewBufferString("abc")
+	_, err = f.Put(ctx, buf, oi)
+	assert.Error(t, err)
+
+	// Rcat must fail
+	in := io.NopCloser(bytes.NewBufferString("abc"))
+	robj, err := operations.Rcat(ctx, f, file, in, modTime, nil)
+	assert.Nil(t, robj)
+	assert.NotNil(t, err)
+	if err != nil {
+		assert.Contains(t, err.Error(), "please upgrade rclone")
+	}
+}
+
+// The newer method of doing transactions without renaming should still be able to correctly process chunks that were created with renaming
+// If you attempt to do the inverse, however, the data chunks will be ignored causing commands to perform incorrectly
+func testBackwardsCompatibility(t *testing.T, f *Fs) {
+	if !f.useMeta {
+		t.Skip("Can't do norename transactions without metadata")
+	}
+	const dir = "backcomp"
+	ctx := context.Background()
+	saveOpt := f.opt
+	saveUseNoRename := f.useNoRename
+	defer func() {
+		f.opt.FailHard = false
+		_ = operations.Purge(ctx, f.base, dir)
+		f.opt = saveOpt
+		f.useNoRename = saveUseNoRename
+	}()
+	f.opt.ChunkSize = fs.SizeSuffix(10)
+
+	modTime := fstest.Time("2001-02-03T04:05:06.499999999Z")
+	contents := random.String(250)
+	newFile := func(f fs.Fs, name string) (fs.Object, string) {
+		filename := path.Join(dir, name)
+		item := fstest.Item{Path: filename, ModTime: modTime}
+		obj := fstests.PutTestContents(ctx, t, f, &item, contents, true)
+		require.NotNil(t, obj)
+		return obj, filename
+	}
+
+	f.opt.FailHard = false
+	f.useNoRename = false
+	file, fileName := newFile(f, "renamefile")
+
+	f.opt.FailHard = false
+	item := fstest.NewItem(fileName, contents, modTime)
+
+	var items []fstest.Item
+	items = append(items, item)
+
+	f.useNoRename = true
+	fstest.CheckListingWithRoot(t, f, dir, items, nil, f.Precision())
+	_, err := f.NewObject(ctx, fileName)
+	assert.NoError(t, err)
+
+	f.opt.FailHard = true
+	_, err = f.List(ctx, dir)
+	assert.NoError(t, err)
+
+	f.opt.FailHard = false
+	_ = file.Remove(ctx)
+}
+
+func testChunkerServerSideMove(t *testing.T, f *Fs) {
+	if !f.useMeta {
+		t.Skip("Can't test norename transactions without metadata")
+	}
+
+	ctx := context.Background()
+	const dir = "servermovetest"
+	subRemote := fmt.Sprintf("%s:%s/%s", f.Name(), f.Root(), dir)
+
+	subFs1, err := fs.NewFs(ctx, subRemote+"/subdir1")
+	assert.NoError(t, err)
+	fs1, isChunkerFs := subFs1.(*Fs)
+	assert.True(t, isChunkerFs)
+	fs1.useNoRename = false
+	fs1.opt.ChunkSize = fs.SizeSuffix(3)
+
+	subFs2, err := fs.NewFs(ctx, subRemote+"/subdir2")
+	assert.NoError(t, err)
+	fs2, isChunkerFs := subFs2.(*Fs)
+	assert.True(t, isChunkerFs)
+	fs2.useNoRename = true
+	fs2.opt.ChunkSize = fs.SizeSuffix(3)
+
+	modTime := fstest.Time("2001-02-03T04:05:06.499999999Z")
+	item := fstest.Item{Path: "movefile", ModTime: modTime}
+	contents := "abcdef"
+	file := fstests.PutTestContents(ctx, t, fs1, &item, contents, true)
+
+	dstOverwritten, _ := fs2.NewObject(ctx, "movefile")
+	dstFile, err := operations.Move(ctx, fs2, dstOverwritten, "movefile", file)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(len(contents)), dstFile.Size())
+
+	r, err := dstFile.Open(ctx)
+	assert.NoError(t, err)
+	assert.NotNil(t, r)
+	data, err := io.ReadAll(r)
+	assert.NoError(t, err)
+	assert.Equal(t, contents, string(data))
+	_ = r.Close()
+	_ = operations.Purge(ctx, f.base, dir)
+}
+
+// Test that md5all creates metadata even for small files
+func testMD5AllSlow(t *testing.T, f *Fs) {
+	ctx := context.Background()
+	fsResult := deriveFs(ctx, t, f, "md5all", settings{
+		"chunk_size":   "1P",
+		"name_format":  "*.#",
+		"hash_type":    "md5all",
+		"transactions": "rename",
+		"meta_format":  "simplejson",
+	})
+	chunkFs, ok := fsResult.(*Fs)
+	require.True(t, ok, "fs must be a chunker remote")
+	baseFs := chunkFs.base
+	if !baseFs.Features().SlowHash {
+		t.Skipf("this test needs a base fs with slow hash, e.g. local")
+	}
+
+	assert.True(t, chunkFs.useMD5, "must use md5")
+	assert.True(t, chunkFs.hashAll, "must hash all files")
+
+	_ = testPutFile(ctx, t, chunkFs, "file", "-", "error", true)
+	obj, err := chunkFs.NewObject(ctx, "file")
+	require.NoError(t, err)
+	sum, err := obj.Hash(ctx, hash.MD5)
+	assert.NoError(t, err)
+	assert.Equal(t, "336d5ebc5436534e61d16e63ddfca327", sum)
+
+	list, err := baseFs.List(ctx, "")
+	require.NoError(t, err)
+	assert.Equal(t, 2, len(list))
+	_, err = baseFs.NewObject(ctx, "file")
+	assert.NoError(t, err, "metadata must be created")
+	_, err = baseFs.NewObject(ctx, "file.1")
+	assert.NoError(t, err, "first chunk must be created")
+
+	require.NoError(t, operations.Purge(ctx, baseFs, ""))
 }
 
 // InternalTest dispatches all internal tests
@@ -685,6 +921,18 @@ func (f *Fs) InternalTest(t *testing.T) {
 	})
 	t.Run("MetadataInput", func(t *testing.T) {
 		testMetadataInput(t, f)
+	})
+	t.Run("FutureProof", func(t *testing.T) {
+		testFutureProof(t, f)
+	})
+	t.Run("BackwardsCompatibility", func(t *testing.T) {
+		testBackwardsCompatibility(t, f)
+	})
+	t.Run("ChunkerServerSideMove", func(t *testing.T) {
+		testChunkerServerSideMove(t, f)
+	})
+	t.Run("MD5AllSlow", func(t *testing.T) {
+		testMD5AllSlow(t, f)
 	})
 }
 

@@ -1,9 +1,10 @@
+// Package vfscommon provides utilities for VFS.
 package vfscommon
 
 import (
 	"fmt"
 
-	"github.com/rclone/rclone/lib/errors"
+	"github.com/rclone/rclone/fs"
 )
 
 // CacheMode controls the functionality of the cache
@@ -40,10 +41,21 @@ func (l *CacheMode) Set(s string) error {
 			return nil
 		}
 	}
-	return errors.Errorf("Unknown cache mode level %q", s)
+	return fmt.Errorf("unknown cache mode level %q", s)
 }
 
 // Type of the value
 func (l *CacheMode) Type() string {
 	return "CacheMode"
+}
+
+// UnmarshalJSON makes sure the value can be parsed as a string or integer in JSON
+func (l *CacheMode) UnmarshalJSON(in []byte) error {
+	return fs.UnmarshalJSONFlag(in, l, func(i int64) error {
+		if i < 0 || i >= int64(len(cacheModeToString)) {
+			return fmt.Errorf("unknown cache mode level %d", i)
+		}
+		*l = CacheMode(i)
+		return nil
+	})
 }

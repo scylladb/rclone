@@ -4,11 +4,12 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"regexp"
 
-	"github.com/pkg/errors"
 	"github.com/rclone/rclone/fs"
+	"github.com/rclone/rclone/fs/fspath"
 	"github.com/rclone/rclone/fs/list"
 	"github.com/rclone/rclone/fs/operations"
 )
@@ -39,7 +40,7 @@ func cleanFs(ctx context.Context, remote string, cleanup bool) error {
 	}
 	err = entries.ForDirError(func(dir fs.Directory) error {
 		dirPath := dir.Remote()
-		fullPath := remote + dirPath
+		fullPath := fspath.JoinRootPath(remote, dirPath)
 		if MatchTestRemote.MatchString(dirPath) {
 			if *dryRun {
 				log.Printf("Not Purging %s - -dry-run", fullPath)
@@ -48,14 +49,14 @@ func cleanFs(ctx context.Context, remote string, cleanup bool) error {
 			log.Printf("Purging %s", fullPath)
 			dir, err := fs.NewFs(context.Background(), fullPath)
 			if err != nil {
-				err = errors.Wrap(err, "NewFs failed")
+				err = fmt.Errorf("NewFs failed: %w", err)
 				lastErr = err
 				fs.Errorf(fullPath, "%v", err)
 				return nil
 			}
 			err = operations.Purge(ctx, dir, "")
 			if err != nil {
-				err = errors.Wrap(err, "Purge failed")
+				err = fmt.Errorf("purge failed: %w", err)
 				lastErr = err
 				fs.Errorf(dir, "%v", err)
 				return nil

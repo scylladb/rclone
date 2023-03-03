@@ -2,11 +2,12 @@ package union
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"sync"
 	"time"
 
-	"github.com/pkg/errors"
 	"github.com/rclone/rclone/backend/union/upstream"
 	"github.com/rclone/rclone/fs"
 )
@@ -33,9 +34,8 @@ type entry interface {
 	candidates() []upstream.Entry
 }
 
-// UnWrap returns the Object that this Object is wrapping or
-// nil if it isn't wrapping anything
-func (o *Object) UnWrap() *upstream.Object {
+// UnWrapUpstream returns the upstream Object that this Object is wrapping
+func (o *Object) UnWrapUpstream() *upstream.Object {
 	return o.Object
 }
 
@@ -59,7 +59,17 @@ func (d *Directory) candidates() []upstream.Entry {
 // return an error or update the object properly (rather than e.g. calling panic).
 func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) error {
 	entries, err := o.fs.actionEntries(o.candidates()...)
-	if err != nil {
+	if err == fs.ErrorPermissionDenied {
+		// There are no candidates in this object which can be written to
+		// So attempt to create a new object instead
+		newO, err := o.fs.put(ctx, in, src, false, options...)
+		if err != nil {
+			return err
+		}
+		// Update current object
+		*o = *newO.(*Object)
+		return nil
+	} else if err != nil {
 		return err
 	}
 	if len(entries) == 1 {
@@ -72,7 +82,13 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 	multithread(len(entries), func(i int) {
 		if o, ok := entries[i].(*upstream.Object); ok {
 			err := o.Update(ctx, readers[i], src, options...)
-			errs[i] = errors.Wrap(err, o.UpstreamFs().Name())
+			if err != nil {
+				errs[i] = fmt.Errorf("%s: %w", o.UpstreamFs().Name(), err)
+				if len(entries) > 1 {
+					// Drain the input buffer to allow other uploads to continue
+					_, _ = io.Copy(io.Discard, readers[i])
+				}
+			}
 		} else {
 			errs[i] = fs.ErrorNotAFile
 		}
@@ -91,7 +107,9 @@ func (o *Object) Remove(ctx context.Context) error {
 	multithread(len(entries), func(i int) {
 		if o, ok := entries[i].(*upstream.Object); ok {
 			err := o.Remove(ctx)
-			errs[i] = errors.Wrap(err, o.UpstreamFs().Name())
+			if err != nil {
+				errs[i] = fmt.Errorf("%s: %w", o.UpstreamFs().Name(), err)
+			}
 		} else {
 			errs[i] = fs.ErrorNotAFile
 		}
@@ -110,13 +128,51 @@ func (o *Object) SetModTime(ctx context.Context, t time.Time) error {
 	multithread(len(entries), func(i int) {
 		if o, ok := entries[i].(*upstream.Object); ok {
 			err := o.SetModTime(ctx, t)
-			errs[i] = errors.Wrap(err, o.UpstreamFs().Name())
+			if err != nil {
+				errs[i] = fmt.Errorf("%s: %w", o.UpstreamFs().Name(), err)
+			}
 		} else {
 			errs[i] = fs.ErrorNotAFile
 		}
 	})
 	wg.Wait()
 	return errs.Err()
+}
+
+// GetTier returns storage tier or class of the Object
+func (o *Object) GetTier() string {
+	do, ok := o.Object.Object.(fs.GetTierer)
+	if !ok {
+		return ""
+	}
+	return do.GetTier()
+}
+
+// ID returns the ID of the Object if known, or "" if not
+func (o *Object) ID() string {
+	do, ok := o.Object.Object.(fs.IDer)
+	if !ok {
+		return ""
+	}
+	return do.ID()
+}
+
+// MimeType returns the content type of the Object if known
+func (o *Object) MimeType(ctx context.Context) (mimeType string) {
+	if do, ok := o.Object.Object.(fs.MimeTyper); ok {
+		mimeType = do.MimeType(ctx)
+	}
+	return mimeType
+}
+
+// SetTier performs changing storage tier of the Object if
+// multiple storage classes supported
+func (o *Object) SetTier(tier string) error {
+	do, ok := o.Object.Object.(fs.SetTierer)
+	if !ok {
+		return errors.New("underlying remote does not support SetTier")
+	}
+	return do.SetTier(tier)
 }
 
 // ModTime returns the modification date of the directory
@@ -143,3 +199,8 @@ func (d *Directory) Size() (s int64) {
 	}
 	return s
 }
+
+// Check the interfaces are satisfied
+var (
+	_ fs.FullObject = (*Object)(nil)
+)

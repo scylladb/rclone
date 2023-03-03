@@ -1,9 +1,10 @@
+// Package obscure provides the obscure command.
 package obscure
 
 import (
+	"bufio"
 	"fmt"
 
-	"io/ioutil"
 	"os"
 
 	"github.com/rclone/rclone/cmd"
@@ -18,7 +19,7 @@ func init() {
 var commandDefinition = &cobra.Command{
 	Use:   "obscure password",
 	Short: `Obscure password for use in the rclone config file.`,
-	Long: `In the rclone config file, human readable passwords are
+	Long: `In the rclone config file, human-readable passwords are
 obscured. Obscuring them is done by encrypting them and writing them
 out in base64. This is **not** a secure way of encrypting these
 passwords as rclone can decrypt them - it is to prevent "eyedropping"
@@ -30,9 +31,10 @@ the config file. However it is very hard to shoulder surf a 64
 character hex token.
 
 This command can also accept a password through STDIN instead of an
-argument by passing a hyphen as an argument. Example:
+argument by passing a hyphen as an argument. This will use the first
+line of STDIN as the password not including the trailing newline.
 
-echo "secretpassword" | rclone obscure -
+    echo "secretpassword" | rclone obscure -
 
 If there is no data on STDIN to read, rclone obscure will default to
 obfuscating the hyphen itself.
@@ -40,13 +42,21 @@ obfuscating the hyphen itself.
 If you want to encrypt the config file then please use config file
 encryption - see [rclone config](/commands/rclone_config/) for more
 info.`,
-	Run: func(command *cobra.Command, args []string) {
+	Annotations: map[string]string{
+		"versionIntroduced": "v1.36",
+	},
+	RunE: func(command *cobra.Command, args []string) error {
 		cmd.CheckArgs(1, 1, command, args)
 		var password string
 		fi, _ := os.Stdin.Stat()
 		if args[0] == "-" && (fi.Mode()&os.ModeCharDevice) == 0 {
-			bytes, _ := ioutil.ReadAll(os.Stdin)
-			password = string(bytes)
+			scanner := bufio.NewScanner(os.Stdin)
+			if scanner.Scan() {
+				password = scanner.Text()
+			}
+			if err := scanner.Err(); err != nil {
+				return err
+			}
 		} else {
 			password = args[0]
 		}
@@ -55,5 +65,6 @@ info.`,
 			fmt.Println(obscured)
 			return nil
 		})
+		return nil
 	},
 }

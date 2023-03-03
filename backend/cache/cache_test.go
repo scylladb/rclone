@@ -1,7 +1,7 @@
 // Test Cache filesystem interface
 
-// +build !plan9,!js
-// +build !race
+//go:build !plan9 && !js && !race
+// +build !plan9,!js,!race
 
 package cache_test
 
@@ -19,7 +19,7 @@ func TestIntegration(t *testing.T) {
 		RemoteName:                   "TestCache:",
 		NilObject:                    (*cache.Object)(nil),
 		UnimplementableFsMethods:     []string{"PublicLink", "OpenWriterAt"},
-		UnimplementableObjectMethods: []string{"MimeType", "ID", "GetTier", "SetTier"},
+		UnimplementableObjectMethods: []string{"MimeType", "ID", "GetTier", "SetTier", "Metadata"},
 		SkipInvalidUTF8:              true, // invalid UTF-8 confuses the cache
 	})
 }

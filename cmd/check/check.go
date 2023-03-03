@@ -1,7 +1,9 @@
+// Package check provides the check command.
 package check
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -9,6 +11,7 @@ import (
 	"github.com/rclone/rclone/cmd"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/config/flags"
+	"github.com/rclone/rclone/fs/hash"
 	"github.com/rclone/rclone/fs/operations"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -16,20 +19,22 @@ import (
 
 // Globals
 var (
-	download     = false
-	oneway       = false
-	combined     = ""
-	missingOnSrc = ""
-	missingOnDst = ""
-	match        = ""
-	differ       = ""
-	errFile      = ""
+	download          = false
+	oneway            = false
+	combined          = ""
+	missingOnSrc      = ""
+	missingOnDst      = ""
+	match             = ""
+	differ            = ""
+	errFile           = ""
+	checkFileHashType = ""
 )
 
 func init() {
 	cmd.Root.AddCommand(commandDefinition)
 	cmdFlags := commandDefinition.Flags()
-	flags.BoolVarP(cmdFlags, &download, "download", "", download, "Check by downloading rather than with hash.")
+	flags.BoolVarP(cmdFlags, &download, "download", "", download, "Check by downloading rather than with hash")
+	flags.StringVarP(cmdFlags, &checkFileHashType, "checkfile", "C", checkFileHashType, "Treat source:path as a SUM file with hashes of given type")
 	AddFlags(cmdFlags)
 }
 
@@ -45,7 +50,8 @@ func AddFlags(cmdFlags *pflag.FlagSet) {
 }
 
 // FlagsHelp describes the flags for the help
-var FlagsHelp = strings.Replace(`
+// Warning! "|" will be replaced by backticks below
+var FlagsHelp = strings.ReplaceAll(`
 If you supply the |--one-way| flag, it will only check that files in
 the source match the files in the destination, not the other way
 around. This means that extra files in the destination that are not in
@@ -66,7 +72,7 @@ you what happened to it. These are reminiscent of diff files.
 - |+ path| means path was missing on the destination, so only in the source
 - |* path| means path was present in source and destination but different.
 - |! path| means there was an error reading or hashing the source or dest.
-`, "|", "`", -1)
+`, "|", "`")
 
 // GetCheckOpt gets the options corresponding to the check flags
 func GetCheckOpt(fsrc, fdst fs.Fs) (opt *operations.CheckOpt, close func(), err error) {
@@ -124,38 +130,71 @@ func GetCheckOpt(fsrc, fdst fs.Fs) (opt *operations.CheckOpt, close func(), err 
 	}
 
 	return opt, close, nil
-
 }
 
 var commandDefinition = &cobra.Command{
 	Use:   "check source:path dest:path",
 	Short: `Checks the files in the source and destination match.`,
-	Long: `
+	Long: strings.ReplaceAll(`
 Checks the files in the source and destination match.  It compares
-sizes and hashes (MD5 or SHA1) and logs a report of files which don't
+sizes and hashes (MD5 or SHA1) and logs a report of files that don't
 match.  It doesn't alter the source or destination.
 
-If you supply the --size-only flag, it will only compare the sizes not
+For the [crypt](/crypt/) remote there is a dedicated command,
+[cryptcheck](/commands/rclone_cryptcheck/), that are able to check
+the checksums of the crypted files.
+
+If you supply the |--size-only| flag, it will only compare the sizes not
 the hashes as well.  Use this for a quick check.
 
-If you supply the --download flag, it will download the data from
+If you supply the |--download| flag, it will download the data from
 both remotes and check them against each other on the fly.  This can
 be useful for remotes that don't support hashes or if you really want
 to check all the data.
-` + FlagsHelp,
-	Run: func(command *cobra.Command, args []string) {
+
+If you supply the |--checkfile HASH| flag with a valid hash name,
+the |source:path| must point to a text file in the SUM format.
+`, "|", "`") + FlagsHelp,
+	RunE: func(command *cobra.Command, args []string) error {
 		cmd.CheckArgs(2, 2, command, args)
-		fsrc, fdst := cmd.NewFsSrcDst(args)
+		var (
+			fsrc, fdst fs.Fs
+			hashType   hash.Type
+			fsum       fs.Fs
+			sumFile    string
+		)
+		if checkFileHashType != "" {
+			if err := hashType.Set(checkFileHashType); err != nil {
+				fmt.Println(hash.HelpString(0))
+				return err
+			}
+			fsum, sumFile, fsrc = cmd.NewFsSrcFileDst(args)
+		} else {
+			fsrc, fdst = cmd.NewFsSrcDst(args)
+		}
+
 		cmd.Run(false, true, command, func() error {
 			opt, close, err := GetCheckOpt(fsrc, fdst)
 			if err != nil {
 				return err
 			}
 			defer close()
+
+			if checkFileHashType != "" {
+				return operations.CheckSum(context.Background(), fsrc, fsum, sumFile, hashType, opt, download)
+			}
+
 			if download {
 				return operations.CheckDownload(context.Background(), opt)
 			}
+			hashType := fsrc.Hashes().Overlap(fdst.Hashes()).GetOne()
+			if hashType == hash.None {
+				fs.Errorf(nil, "No common hash found - not using a hash for checks")
+			} else {
+				fs.Infof(nil, "Using %v for hash comparisons", hashType)
+			}
 			return operations.Check(context.Background(), opt)
 		})
+		return nil
 	},
 }
