@@ -370,6 +370,7 @@ func (sg *statsGroups) sum(ctx context.Context) *StatsInfo {
 			sum.startedTransfers = append(sum.startedTransfers, stats.startedTransfers...)
 			sum.oldDuration += stats.oldDuration
 			sum.oldTimeRanges = append(sum.oldTimeRanges, stats.oldTimeRanges...)
+			sum.oldTransfers.merge(stats.oldTransfers)
 		}
 		stats.mu.RUnlock()
 	}
