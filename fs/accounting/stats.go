@@ -371,6 +371,17 @@ func (s *StatsInfo) Transferred() []TransferSnapshot {
 	return ts
 }
 
+// Aggregated returns aggregated stats for all completed and running transfers.
+func (s *StatsInfo) Aggregated() AggregatedTransferInfo {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ai := s.oldTransfers
+	for _, tr := range s.startedTransfers {
+		ai.update(tr)
+	}
+	return ai
+}
+
 // Log outputs the StatsInfo to the log
 func (s *StatsInfo) Log() {
 	if s.ci.UseJSONLog {
