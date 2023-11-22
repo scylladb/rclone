@@ -364,8 +364,7 @@ func (s *syncCopyMove) pairChecker(in *pipe, out *pipe, fraction int, wg *sync.W
 			}
 		}
 		if !ok {
-			// Record dummy transfer for calculating skipped bytes of skipped files
-			accounting.Stats(s.ctx).NewTransfer(src).Done(s.ctx, err)
+			accounting.Stats(s.ctx).UpdateSkipped(tr.Snapshot().Size)
 		}
 		tr.Done(s.ctx, err)
 	}
@@ -387,6 +386,8 @@ func (s *syncCopyMove) pairRenamer(in *pipe, out *pipe, fraction int, wg *sync.W
 			if !ok {
 				return
 			}
+		} else {
+			accounting.Stats(s.ctx).UpdateSkipped(src.Size())
 		}
 	}
 }
@@ -1012,8 +1013,7 @@ func (s *syncCopyMove) SrcOnly(src fs.DirEntry) (recurse bool) {
 					return
 				}
 			} else {
-				// Record dummy transfer for calculating skipped bytes of skipped files
-				accounting.Stats(s.ctx).NewTransfer(x).Done(s.ctx, err)
+				accounting.Stats(s.ctx).UpdateSkipped(x.Size())
 			}
 		}
 	case fs.Directory:
