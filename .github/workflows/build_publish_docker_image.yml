@@ -12,11 +12,11 @@ jobs:
         name: Build image job
         steps:
             - name: Checkout master
-              uses: actions/checkout@v3
+              uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
               with:
                 fetch-depth: 0
             - name: Build and publish image
-              uses: ilteoood/docker_buildx@1.1.0
+              uses: ilteoood/docker_buildx@6b39b71910094ac94e300c80a592f6980596a32d # 1.1.0
               with:
                 tag: beta
                 imageName: rclone/rclone
