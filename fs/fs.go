@@ -1076,6 +1076,18 @@ type ObjectRetentionSetter interface {
 	SetObjectRetention(ctx context.Context, remote string, info ObjectRetentionInfo, overrideLock bool) error
 }
 
+// EventBasedHolder is an optional interface for Object.
+type EventBasedHolder interface {
+	// EventBasedHold returns whether the object is under event based hold.
+	EventBasedHold(ctx context.Context) (bool, error)
+}
+
+// EventBasedHoldSetter is an optional interface for Fs.
+type EventBasedHoldSetter interface {
+	// SetEventBasedHold sets or clears event based hold.
+	SetEventBasedHold(ctx context.Context, remote string, hold bool) error
+}
+
 // RangeSeeker is the interface that wraps the RangeSeek method.
 //
 // Some of the returns from Object.Open() may optionally implement
