@@ -349,14 +349,15 @@ type Fs struct {
 //
 // Will definitely have info but maybe not meta
 type Object struct {
-	fs            *Fs       // what this object is part of
-	remote        string    // The remote path
-	url           string    // download path
-	md5sum        string    // The MD5Sum of the object
-	bytes         int64     // Bytes in the object
-	modTime       time.Time // Modified time of the object
-	mimeType      string
-	retentionInfo fs.ObjectRetentionInfo // Object retention info returned with object metadata
+	fs             *Fs       // what this object is part of
+	remote         string    // The remote path
+	url            string    // download path
+	md5sum         string    // The MD5Sum of the object
+	bytes          int64     // Bytes in the object
+	modTime        time.Time // Modified time of the object
+	mimeType       string
+	retentionInfo  fs.ObjectRetentionInfo // Object retention info returned with object metadata
+	eventBasedHold bool                   // Whether object has event based hold applied
 }
 
 // ------------------------------------------------------------
@@ -993,6 +994,34 @@ func (f *Fs) SetObjectRetention(ctx context.Context, remote string, info fs.Obje
 	return nil
 }
 
+// EventBasedHold returns cached event based hold state.
+func (o *Object) EventBasedHold(_ context.Context) (bool, error) {
+	return o.eventBasedHold, nil
+}
+
+// SetEventBasedHold sets or clears event based hold on the specified remote using Objects.Patch.
+func (f *Fs) SetEventBasedHold(ctx context.Context, remote string, hold bool) error {
+	bucket, bucketPath := f.split(remote)
+	obj := &storage.Object{
+		EventBasedHold: hold,
+		ForceSendFields: []string{
+			"EventBasedHold", // To ensure that clearing event based hold goes through
+		},
+	}
+	err := f.pacer.Call(func() (bool, error) {
+		var err error
+		_, err = f.svc.Objects.Patch(bucket, bucketPath, obj).
+			Fields("eventBasedHold"). // Just to limit server response size
+			Context(ctx).
+			Do()
+		return shouldRetry(err)
+	})
+	if err != nil {
+		return errors.Wrapf(err, "set event based hold on remote %q to %v", remote, hold)
+	}
+	return nil
+}
+
 func gcsRetentionMode(mode fs.RetentionMode) (string, error) {
 	switch mode {
 	case fs.RetentionModeNone:
@@ -1060,6 +1089,8 @@ func (o *Object) setMetaData(info *storage.Object) {
 
 	// Set retention info
 	o.setRetentionMetaData(info)
+	// Set event based hold info
+	o.eventBasedHold = info.EventBasedHold
 
 	// Read md5sum
 	md5sumData, err := base64.StdEncoding.DecodeString(info.Md5Hash)
@@ -1338,7 +1369,9 @@ var (
 	_ fs.PutStreamer           = &Fs{}
 	_ fs.ListRer               = &Fs{}
 	_ fs.ObjectRetentionSetter = &Fs{}
+	_ fs.EventBasedHoldSetter  = &Fs{}
 	_ fs.Object                = &Object{}
 	_ fs.ObjectRetentionInfoer = &Object{}
+	_ fs.EventBasedHolder      = &Object{}
 	_ fs.MimeTyper             = &Object{}
 )
